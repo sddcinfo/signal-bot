@@ -131,6 +131,22 @@ class DatabaseManager:
                 )
             """)
 
+            # Attachments table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS attachments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+                    attachment_id TEXT,
+                    filename TEXT,
+                    content_type TEXT,
+                    file_size INTEGER,
+                    file_path TEXT,
+                    file_data BLOB,
+                    downloaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id)")
+
             # Bot configuration (key-value store)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS bot_config (
@@ -558,8 +574,8 @@ class DatabaseManager:
             return cursor.fetchone() is not None
 
     def mark_message_processed(self, timestamp: int, group_id: str, sender_uuid: str,
-                             message_text: Optional[str] = None) -> None:
-        """Mark message as processed."""
+                             message_text: Optional[str] = None) -> Optional[int]:
+        """Mark message as processed and return message ID."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -582,6 +598,7 @@ class DatabaseManager:
                     VALUES (?, ?, ?, datetime('now'))
                 """, (timestamp, group_id, sender_uuid))
 
+            message_id = None
             # Also insert into messages table for viewing
             if message_text:
                 cursor.execute("""
@@ -590,6 +607,15 @@ class DatabaseManager:
                     VALUES (?, ?, ?, ?, datetime('now'))
                 """, (timestamp, group_id, sender_uuid, message_text))
 
+                # Get the message ID
+                cursor.execute("""
+                    SELECT id FROM messages
+                    WHERE timestamp = ? AND group_id = ? AND sender_uuid = ?
+                """, (timestamp, group_id, sender_uuid))
+                row = cursor.fetchone()
+                if row:
+                    message_id = row['id']
+
             # Increment user message count in the same transaction
             cursor.execute("""
                 UPDATE users
@@ -597,6 +623,8 @@ class DatabaseManager:
                     last_message_at = datetime('now')
                 WHERE uuid = ?
             """, (sender_uuid,))
+
+            return message_id
 
     def cleanup_old_messages(self, days: int = 30) -> None:
         """Clean up old processed messages."""
@@ -616,26 +644,49 @@ class DatabaseManager:
 
             self.logger.info(f"Cleaned up messages older than {days} days")
 
-    def get_group_messages(self, group_id: str, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def get_group_messages(self, group_id: str, limit: int = 100, offset: int = 0, attachments_only: bool = False) -> List[Dict[str, Any]]:
         """Get messages from a specific group with sender info."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    m.id,
-                    m.timestamp,
-                    m.message_text,
-                    m.processed_at,
-                    u.uuid as sender_uuid,
-                    u.friendly_name,
-                    u.display_name,
-                    u.phone_number
-                FROM messages m
-                LEFT JOIN users u ON m.sender_uuid = u.uuid
-                WHERE m.group_id = ?
-                ORDER BY m.timestamp DESC
-                LIMIT ? OFFSET ?
-            """, (group_id, limit, offset))
+
+            # Build query based on whether we want only messages with attachments
+            if attachments_only:
+                query = """
+                    SELECT DISTINCT
+                        m.id,
+                        m.timestamp,
+                        m.message_text,
+                        m.processed_at,
+                        u.uuid as sender_uuid,
+                        u.friendly_name,
+                        u.display_name,
+                        u.phone_number
+                    FROM messages m
+                    LEFT JOIN users u ON m.sender_uuid = u.uuid
+                    INNER JOIN attachments a ON m.id = a.message_id
+                    WHERE m.group_id = ?
+                    ORDER BY m.timestamp DESC
+                    LIMIT ? OFFSET ?
+                """
+            else:
+                query = """
+                    SELECT
+                        m.id,
+                        m.timestamp,
+                        m.message_text,
+                        m.processed_at,
+                        u.uuid as sender_uuid,
+                        u.friendly_name,
+                        u.display_name,
+                        u.phone_number
+                    FROM messages m
+                    LEFT JOIN users u ON m.sender_uuid = u.uuid
+                    WHERE m.group_id = ?
+                    ORDER BY m.timestamp DESC
+                    LIMIT ? OFFSET ?
+                """
+
+            cursor.execute(query, (group_id, limit, offset))
 
             messages = []
             for row in cursor.fetchall():
@@ -650,11 +701,19 @@ class DatabaseManager:
                 })
             return messages
 
-    def get_group_message_count(self, group_id: str) -> int:
+    def get_group_message_count(self, group_id: str, attachments_only: bool = False) -> int:
         """Get total number of messages for a group."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) as count FROM messages WHERE group_id = ?", (group_id,))
+            if attachments_only:
+                cursor.execute("""
+                    SELECT COUNT(DISTINCT m.id) as count
+                    FROM messages m
+                    INNER JOIN attachments a ON m.id = a.message_id
+                    WHERE m.group_id = ?
+                """, (group_id,))
+            else:
+                cursor.execute("SELECT COUNT(*) as count FROM messages WHERE group_id = ?", (group_id,))
             return cursor.fetchone()['count']
 
     def get_recent_group_messages(self, group_id: str, hours: int = 24) -> List[Dict[str, Any]]:
@@ -1309,3 +1368,257 @@ class DatabaseManager:
             cursor.execute(query, params)
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
+
+    def store_message_with_attachments(self, timestamp: int, group_id: str, sender_uuid: str,
+                                     message_text: str, attachments: List[Dict[str, Any]] = None) -> int:
+        """Store message in messages table and return message_id for attachment linking."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO messages (timestamp, group_id, sender_uuid, message_text)
+                VALUES (?, ?, ?, ?)
+            """, (timestamp, group_id, sender_uuid, message_text))
+            message_id = cursor.lastrowid
+
+            # Store attachments in the same connection to avoid locking issues
+            if attachments:
+                import os
+                for att in attachments:
+                    # Read file content if file exists
+                    file_data = None
+                    file_path = att.get('file_path')
+                    if file_path and os.path.exists(file_path):
+                        try:
+                            with open(file_path, 'rb') as f:
+                                file_data = f.read()
+                            # Keep the file in filesystem for reference
+                            self.logger.debug(f"Stored attachment in database, file remains at: {file_path}")
+                        except Exception as e:
+                            self.logger.warning(f"Failed to read attachment file {file_path}: {e}")
+
+                    cursor.execute("""
+                        INSERT INTO attachments (
+                            message_id, attachment_id, filename, content_type,
+                            file_size, file_path, file_data
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        message_id,
+                        att.get('id'),
+                        att.get('filename'),
+                        att.get('contentType'),
+                        att.get('size', 0),
+                        file_path,  # Keep for reference, but data is in file_data
+                        file_data
+                    ))
+
+            return message_id
+
+    def store_attachment(self, message_id: int, attachment: Dict[str, Any]) -> None:
+        """Store attachment information linked to a message."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO attachments (
+                    message_id, attachment_id, filename, content_type,
+                    file_size, file_path
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                message_id,
+                attachment.get('id'),
+                attachment.get('filename'),
+                attachment.get('contentType'),
+                attachment.get('size', 0),
+                attachment.get('file_path')  # We'll construct this path
+            ))
+
+    def get_message_attachments(self, message_id: int) -> List[Dict[str, Any]]:
+        """Get all attachments for a message."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, attachment_id, filename, content_type, file_size,
+                       file_path, file_data, downloaded_at
+                FROM attachments
+                WHERE message_id = ?
+                ORDER BY downloaded_at
+            """, (message_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_messages_with_attachments(self, group_id: Optional[str] = None,
+                                    limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get messages with their attachments included."""
+        messages = self.get_messages_by_group_with_names(group_id, limit, offset)
+
+        # For messages table, we need to get the message IDs and fetch attachments
+        # First, let's see if we can get message IDs from processed_messages
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if we have corresponding entries in messages table
+            for message in messages:
+                cursor.execute("""
+                    SELECT id FROM messages
+                    WHERE timestamp = ? AND group_id = ? AND sender_uuid = ?
+                    LIMIT 1
+                """, (message['timestamp'], message['group_id'], message['sender']))
+
+                row = cursor.fetchone()
+                if row:
+                    message['attachments'] = self.get_message_attachments(row['id'])
+                else:
+                    message['attachments'] = []
+
+        return messages
+
+    def reconcile_message_tables(self) -> int:
+        """
+        Reconcile processed_messages table with messages table to catch any missing entries.
+        Returns the number of messages synchronized.
+        """
+        synchronized_count = 0
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Find messages in messages table that aren't in processed_messages
+            cursor.execute("""
+                SELECT m.timestamp, m.group_id, m.sender_uuid, m.message_text
+                FROM messages m
+                LEFT JOIN processed_messages pm ON m.timestamp = pm.timestamp
+                    AND m.group_id = pm.group_id
+                    AND m.sender_uuid = pm.sender_uuid
+                WHERE pm.timestamp IS NULL
+            """)
+
+            missing_messages = cursor.fetchall()
+
+            if missing_messages:
+                self.logger.info(f"Found {len(missing_messages)} messages missing from processed_messages table")
+
+                # Insert missing messages into processed_messages
+                for msg in missing_messages:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO processed_messages
+                        (timestamp, group_id, sender_uuid, message_text)
+                        VALUES (?, ?, ?, ?)
+                    """, (msg['timestamp'], msg['group_id'], msg['sender_uuid'], msg['message_text']))
+
+                    if cursor.rowcount > 0:
+                        synchronized_count += 1
+                        self.logger.debug(f"Synchronized message: {msg['message_text'][:50]}...")
+
+            # Also sync the other direction - remove processed_messages that don't have corresponding messages
+            cursor.execute("""
+                DELETE FROM processed_messages
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM messages m
+                    WHERE m.timestamp = processed_messages.timestamp
+                    AND m.group_id = processed_messages.group_id
+                    AND m.sender_uuid = processed_messages.sender_uuid
+                )
+            """)
+
+            if cursor.rowcount > 0:
+                self.logger.info(f"Removed {cursor.rowcount} orphaned entries from processed_messages")
+
+        if synchronized_count > 0:
+            self.logger.info(f"Reconciliation complete: synchronized {synchronized_count} messages")
+
+        return synchronized_count
+
+    def sync_from_signal_cli_database(self) -> dict:
+        """
+        Sync user and group data from signal-cli's database to catch any updates.
+        Returns dict with sync counts.
+        """
+        import sqlite3
+        import os
+        from pathlib import Path
+
+        # Path to signal-cli database
+        signal_cli_db_path = Path.home() / ".local/share/signal-cli/data/205515.d/account.db"
+
+        if not signal_cli_db_path.exists():
+            self.logger.warning(f"Signal-cli database not found at {signal_cli_db_path}")
+            return {"users": 0, "groups": 0, "sent_messages": 0}
+
+        sync_counts = {"users": 0, "groups": 0, "sent_messages": 0}
+
+        try:
+            # Connect to signal-cli database (read-only)
+            signal_cli_conn = sqlite3.connect(f"file:{signal_cli_db_path}?mode=ro", uri=True)
+            signal_cli_conn.row_factory = sqlite3.Row
+            signal_cli_cursor = signal_cli_conn.cursor()
+
+            # Sync users from recipient table
+            signal_cli_cursor.execute("""
+                SELECT aci, number, given_name, family_name, profile_given_name, profile_family_name
+                FROM recipient
+                WHERE aci IS NOT NULL
+            """)
+
+            recipients = signal_cli_cursor.fetchall()
+
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                for recipient in recipients:
+                    uuid = recipient['aci']
+                    phone = recipient['number']
+
+                    # Determine best display name
+                    display_name = None
+                    if recipient['given_name']:
+                        display_name = f"{recipient['given_name']} {recipient['family_name'] or ''}".strip()
+                    elif recipient['profile_given_name']:
+                        display_name = f"{recipient['profile_given_name']} {recipient['profile_family_name'] or ''}".strip()
+
+                    # Update our users table
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO users (uuid, phone_number, display_name, first_seen)
+                        VALUES (?, ?, ?, datetime('now'))
+                    """, (uuid, phone, display_name))
+
+                    if cursor.rowcount > 0:
+                        sync_counts["users"] += 1
+
+            # Sync groups from group_v2 table
+            signal_cli_cursor.execute("""
+                SELECT group_id, group_data
+                FROM group_v2
+            """)
+
+            groups = signal_cli_cursor.fetchall()
+
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                for group in groups:
+                    group_id = group['group_id']
+                    if group_id:
+                        # Convert binary group_id to base64 string for our database
+                        import base64
+                        group_id_str = base64.b64encode(group_id).decode('ascii')
+
+                        # For now, just ensure group exists in our table
+                        # TODO: Parse group_data blob to get group name and members
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO groups (group_id, group_name, created_at)
+                            VALUES (?, ?, datetime('now'))
+                        """, (group_id_str, f"Group {group_id_str[:8]}"))
+
+                        if cursor.rowcount > 0:
+                            sync_counts["groups"] += 1
+
+            signal_cli_conn.close()
+
+            if any(count > 0 for count in sync_counts.values()):
+                self.logger.info(f"Signal-cli sync complete: {sync_counts}")
+            else:
+                self.logger.debug("Signal-cli sync complete - no updates needed")
+
+        except Exception as e:
+            self.logger.error(f"Error syncing from signal-cli database: {e}")
+
+        return sync_counts

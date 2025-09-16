@@ -36,16 +36,18 @@ from web.server import WebServer
 class SignalBot:
     """UUID-based Signal bot with clean, thread-safe architecture."""
 
-    def __init__(self, sync_groups_on_start=False):
+    def __init__(self, sync_groups_on_start=False, debug=False):
         """Initialize the Signal bot.
 
         Args:
             sync_groups_on_start: Whether to sync group memberships on startup
+            debug: Enable debug-level logging
         """
         self.shutdown_event = threading.Event()
         self.lock_file_path = Path(__file__).parent / "signal_bot.lock"
         self.log_file_path = Path(__file__).parent / "signal_bot.log"
         self.sync_groups_on_start = sync_groups_on_start
+        self.debug = debug
 
         # Setup logging with detailed formatting
         self._setup_logging()
@@ -71,9 +73,10 @@ class SignalBot:
         self.logger.info("UUID-based Signal Bot initialized (PID: %d)", os.getpid())
 
     def _setup_logging(self):
-        """Setup detailed logging for bot."""
+        """Setup logging for bot."""
+        log_level = logging.DEBUG if self.debug else logging.INFO
         logging.basicConfig(
-            level=logging.DEBUG,
+            level=log_level,
             format='%(asctime)s - %(name)s - %(levelname)s - [%(threadName)s] - %(message)s',
             handlers=[
                 logging.StreamHandler(),
@@ -378,6 +381,11 @@ def main():
         action='store_true',
         help='Start only the web interface without message polling'
     )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug logging for troubleshooting'
+    )
 
     args = parser.parse_args()
 
@@ -409,7 +417,7 @@ def main():
 
     # Normal bot operation
     try:
-        bot = SignalBot(sync_groups_on_start=args.sync_groups)
+        bot = SignalBot(sync_groups_on_start=args.sync_groups, debug=args.debug)
         bot.run()
     except KeyboardInterrupt:
         print("\nInterrupted by user")

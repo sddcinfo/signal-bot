@@ -18,6 +18,8 @@ from typing import Optional, Dict, Any
 import threading
 import uuid
 import time
+import os
+import mimetypes
 
 from models.database import DatabaseManager
 from services.setup import SetupService
@@ -85,10 +87,8 @@ class WebHandler(BaseHTTPRequestHandler):
             elif path == '/sender-messages':
                 self._serve_sender_messages(query)
             elif path == '/sentiment':
-                self.logger.info("Sentiment route accessed")
                 self._serve_sentiment(query)
             elif path == '/activity':
-                self.logger.info("Activity visualization route accessed")
                 self._serve_activity_visualization(query)
             elif path == '/api/status':
                 self._api_status()
@@ -112,6 +112,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 self._api_sentiment_preview(query)
             elif path.startswith('/api/sentiment'):
                 self._api_sentiment_analysis(query)
+            elif path.startswith('/attachment/'):
+                self._serve_attachment(path)
             else:
                 self._send_404()
         except (BrokenPipeError, ConnectionResetError) as e:
@@ -1672,21 +1674,23 @@ class WebHandler(BaseHTTPRequestHandler):
         # Get optional filters
         group_filter = query.get('group_id', [None])[0]
         sender_filter = query.get('sender_uuid', [None])[0]
+        attachments_only = query.get('attachments_only', [None])[0] == 'true'
 
-        # Get messages with pagination and optional filters
+        # Get messages - use the original working method
         try:
             if group_filter and sender_filter:
-                # Get messages from specific group and sender
                 messages = self.db.get_messages_by_group_and_sender(group_id=group_filter, sender_uuid=sender_filter, limit=per_page, offset=offset)
                 total_messages = self.db.get_message_count_by_group_and_sender(group_filter, sender_filter)
             elif group_filter:
-                # Get messages from specific group
-                messages = self.db.get_messages_by_group_with_names(group_id=group_filter, limit=per_page, offset=offset)
+                messages = self.db.get_messages_with_attachments(group_id=group_filter, limit=per_page, offset=offset)
                 total_messages = self.db.get_message_count_by_group(group_filter)
             else:
-                # Get all messages
-                messages = self.db.get_messages_by_group_with_names(limit=per_page, offset=offset)
+                messages = self.db.get_messages_with_attachments(limit=per_page, offset=offset)
                 total_messages = self.db.get_total_message_count()
+
+            # Simple post-filter for attachments if requested
+            if attachments_only:
+                messages = [msg for msg in messages if msg.get('attachments') and len(msg['attachments']) > 0]
         except Exception as e:
             self.logger.error("Error getting all messages: %s", e)
             self._send_error(500, f"Database error: {e}")
@@ -1705,12 +1709,47 @@ class WebHandler(BaseHTTPRequestHandler):
             for msg in messages:
                 timestamp_ms = msg['timestamp'] if msg['timestamp'] else None
 
-                message_text = msg.get('message_text') or '(no text content)'
+                message_text = msg.get('message_text')
+                if not message_text or message_text.strip() == '':
+                    # Skip messages with no meaningful text content
+                    continue
+
                 if len(message_text) > 200:
                     message_text = message_text[:200] + '...'
 
                 timestamp_attr = f'data-timestamp="{timestamp_ms}"' if timestamp_ms else ''
                 timestamp_display = 'Unknown time' if not timestamp_ms else ''
+
+                # Generate attachments HTML
+                attachments_html = ""
+                if msg.get('attachments') and len(msg['attachments']) > 0:
+                    attachments_html = '<div class="message-attachments">'
+                    for attachment in msg['attachments']:
+                        file_name = attachment.get('filename', 'Unknown file')
+                        content_type = attachment.get('content_type', 'unknown')
+                        file_size = attachment.get('file_size', 0)
+                        attachment_id = attachment.get('attachment_id')
+
+                        # Format file size
+                        size_str = f"{file_size:,} bytes" if file_size < 1024 else f"{file_size/1024:.1f} KB" if file_size < 1024*1024 else f"{file_size/(1024*1024):.1f} MB"
+
+                        # Generate attachment display based on content type
+                        if content_type.startswith('image/'):
+                            if attachment_id:
+                                attachments_html += f'''
+                                <div class="attachment attachment-image">
+                                    <img src="/attachment/{attachment_id}" alt="{file_name}" style="max-width: 200px; max-height: 200px; border-radius: 4px;">
+                                    <div class="attachment-info">📷 {file_name} ({size_str})</div>
+                                </div>'''
+                            else:
+                                attachments_html += f'<div class="attachment">📷 {file_name} ({size_str})</div>'
+                        elif content_type.startswith('video/'):
+                            attachments_html += f'<div class="attachment">🎥 {file_name} ({size_str})</div>'
+                        elif content_type.startswith('audio/'):
+                            attachments_html += f'<div class="attachment">🎵 {file_name} ({size_str})</div>'
+                        else:
+                            attachments_html += f'<div class="attachment">📎 {file_name} ({size_str})</div>'
+                    attachments_html += '</div>'
 
                 messages_html += f"""
                 <div class="message-item">
@@ -1721,6 +1760,7 @@ class WebHandler(BaseHTTPRequestHandler):
                     </div>
                     <div class="message-content">
                         {message_text}
+                        {attachments_html}
                     </div>
                 </div>
                 """
@@ -1736,6 +1776,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 filter_params.append(f"group_id={quote(group_filter)}")
             if sender_filter:
                 filter_params.append(f"sender_uuid={quote(sender_filter)}")
+            if attachments_only:
+                filter_params.append("attachments_only=true")
             filter_param = ("&" + "&".join(filter_params)) if filter_params else ""
 
             if page > 1:
@@ -1823,6 +1865,29 @@ class WebHandler(BaseHTTPRequestHandler):
                 .page-btn.current {{
                     background: #333;
                 }}
+                .message-attachments {{
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    border-top: 1px solid #eee;
+                }}
+                .attachment {{
+                    display: inline-block;
+                    margin: 5px 10px 5px 0;
+                    padding: 8px 12px;
+                    background: #f0f8ff;
+                    border: 1px solid #b0d4f1;
+                    border-radius: 6px;
+                    font-size: 14px;
+                }}
+                .attachment-image {{
+                    text-align: center;
+                    padding: 10px;
+                }}
+                .attachment-info {{
+                    margin-top: 5px;
+                    font-size: 12px;
+                    color: #666;
+                }}
             </style>
         </head>
         <body>
@@ -1849,22 +1914,48 @@ class WebHandler(BaseHTTPRequestHandler):
                                 <option value="">All Members</option>
                             </select>
                         </div>
+                        <div>
+                            <label for="attachments-filter" style="display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" id="attachments-filter" onchange="filterByAttachments(this.checked)" {"checked" if attachments_only else ""} style="margin: 0;">
+                                <strong>Show only messages with attachments</strong>
+                            </label>
+                        </div>
                     </div>
                     <script>
                     let currentGroupId = '{group_filter or ""}';
                     let currentSenderUuid = '{sender_filter or ""}';
+                    let currentAttachmentsOnly = {'true' if attachments_only else 'false'};
+
+                    function buildUrl() {{
+                        let url = '/all-messages?';
+                        let params = [];
+
+                        if (currentGroupId) {{
+                            params.push('group_id=' + encodeURIComponent(currentGroupId));
+                        }}
+
+                        if (currentSenderUuid) {{
+                            params.push('sender_uuid=' + encodeURIComponent(currentSenderUuid));
+                        }}
+
+                        if (currentAttachmentsOnly) {{
+                            params.push('attachments_only=true');
+                        }}
+
+                        return url + params.join('&');
+                    }}
 
                     function filterByGroup(groupId) {{
                         currentGroupId = groupId;
                         if (groupId) {{
                             // Load members for this group
                             loadGroupMembers(groupId);
-                            window.location.href = '/all-messages?group_id=' + encodeURIComponent(groupId);
                         }} else {{
                             // Clear member filter when no group selected
                             document.getElementById('member-filter-container').style.display = 'none';
-                            window.location.href = '/all-messages';
+                            currentSenderUuid = '';
                         }}
+                        window.location.href = buildUrl();
                     }}
 
                     function loadGroupMembers(groupId) {{
@@ -1897,17 +1988,12 @@ class WebHandler(BaseHTTPRequestHandler):
 
                     function filterByMember(senderUuid) {{
                         currentSenderUuid = senderUuid;
-                        let url = '/all-messages?';
+                        window.location.href = buildUrl();
+                    }}
 
-                        if (currentGroupId) {{
-                            url += 'group_id=' + encodeURIComponent(currentGroupId);
-                        }}
-
-                        if (senderUuid) {{
-                            url += (currentGroupId ? '&' : '') + 'sender_uuid=' + encodeURIComponent(senderUuid);
-                        }}
-
-                        window.location.href = url || '/all-messages';
+                    function filterByAttachments(attachmentsOnly) {{
+                        currentAttachmentsOnly = attachmentsOnly;
+                        window.location.href = buildUrl();
                     }}
 
                     // Load members on page load if group is selected
@@ -3526,6 +3612,65 @@ class WebHandler(BaseHTTPRequestHandler):
                 'status': 'error',
                 'error': str(e)
             })
+
+    def _serve_attachment(self, path: str):
+        """Serve attachment files from the database."""
+        try:
+            # Extract attachment ID from path /attachment/{attachment_id}
+            attachment_id = path.split('/attachment/')[-1]
+            if not attachment_id:
+                self._send_404()
+                return
+
+            # Get attachment data from database
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT filename, content_type, file_size, file_data
+                    FROM attachments
+                    WHERE attachment_id = ?
+                """, (attachment_id,))
+                attachment = cursor.fetchone()
+
+            if not attachment:
+                self._send_404()
+                return
+
+            # Check if we have file data in database
+            file_data = attachment['file_data']
+            if not file_data:
+                self.logger.warning(f"Attachment {attachment_id} has no file data stored")
+                self._send_404()
+                return
+
+            # Determine content type
+            content_type = attachment['content_type'] if attachment['content_type'] else 'application/octet-stream'
+
+            # If no content type from database, try to guess from filename
+            if content_type == 'application/octet-stream' or not content_type:
+                filename = attachment.get('filename')
+                if filename:
+                    guessed_type, _ = mimetypes.guess_type(filename)
+                    if guessed_type:
+                        content_type = guessed_type
+
+            # Send the file data from database
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(file_data)))
+
+            # Add filename header if available
+            if attachment['filename']:
+                self.send_header('Content-Disposition', f'inline; filename="{attachment["filename"]}"')
+
+            self.end_headers()
+            self.wfile.write(file_data)
+
+            self.logger.debug(f"Served attachment {attachment_id} ({len(file_data)} bytes) from database")
+
+        except Exception as e:
+            self.logger.error(f"Error serving attachment {path}: {e}")
+            self._send_500()
 
 
 class WebServer:

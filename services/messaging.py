@@ -114,7 +114,7 @@ class MessagingService:
                 if sync_message:
                     self.logger.debug("Found sync message with keys: %s", list(sync_message.keys()))
                 sent_message = sync_message.get('sentMessage', {})
-                data_message = sent_message.get('message', {})
+                data_message = sent_message.get('message')
 
                 # If it's a sync message, we need to get the destination info
                 if data_message and sent_message:
@@ -288,7 +288,11 @@ class MessagingService:
             self.db.add_group_member(group_id, source_uuid)
 
             # Mark message as processed with text
-            self.db.mark_message_processed(timestamp, group_id, source_uuid, message_text)
+            message_id = self.db.mark_message_processed(timestamp, group_id, source_uuid, message_text)
+
+            # Download and store attachments if present
+            if isinstance(data_message, dict) and data_message.get('attachments'):
+                self._download_and_store_attachments(data_message['attachments'], message_id, timestamp)
 
             # Check if user has reactions configured and send reaction
             user_reactions = self.db.get_user_reactions(source_uuid)
@@ -348,6 +352,77 @@ class MessagingService:
         except Exception as e:
             self.logger.error("Error sending reaction: %s", e)
             return False
+
+    def _download_and_store_attachments(self, attachments, message_id, timestamp):
+        """Download and store attachments for a message."""
+        for att in attachments:
+            try:
+                if not isinstance(att, dict):
+                    continue
+
+                attachment_id = att.get('id')
+                filename = att.get('filename') or f"attachment_{timestamp}_{attachment_id}"
+                content_type = att.get('contentType', 'unknown')
+                file_size = att.get('size', 0)
+
+                if not attachment_id:
+                    self.logger.warning("Attachment missing ID, skipping")
+                    continue
+
+                # Look for attachment in signal-cli attachments directory
+                import os
+                import glob
+
+                attachments_dir = os.path.expanduser("~/.local/share/signal-cli/attachments")
+                file_data = None
+                actual_filename = filename
+
+                # Try to find the attachment file
+                potential_paths = [
+                    os.path.join(attachments_dir, attachment_id),
+                    os.path.join(attachments_dir, f"{attachment_id}*"),
+                ]
+
+                # Also search for files containing the attachment_id
+                search_patterns = [
+                    os.path.join(attachments_dir, f"*{attachment_id}*"),
+                    os.path.join(attachments_dir, filename) if filename else None
+                ]
+
+                found_file = None
+                for pattern in search_patterns:
+                    if pattern:
+                        matches = glob.glob(pattern)
+                        if matches:
+                            found_file = matches[0]  # Take first match
+                            break
+
+                if found_file and os.path.exists(found_file):
+                    try:
+                        with open(found_file, 'rb') as f:
+                            file_data = f.read()
+                        actual_filename = os.path.basename(found_file)
+
+                        # Store in database
+                        with self.db._get_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("""
+                                INSERT INTO attachments (
+                                    message_id, attachment_id, filename, content_type,
+                                    file_size, file_data
+                                ) VALUES (?, ?, ?, ?, ?, ?)
+                            """, (message_id, attachment_id, actual_filename, content_type, file_size, file_data))
+
+                        self.logger.info("Found and stored attachment: %s (%s, %d bytes)", actual_filename, content_type, len(file_data))
+
+                    except Exception as read_error:
+                        self.logger.error("Error reading attachment file %s: %s", found_file, read_error)
+
+                else:
+                    self.logger.warning("Attachment file not found for ID: %s (searched in %s)", attachment_id, attachments_dir)
+
+            except Exception as e:
+                self.logger.error("Error downloading attachment: %s", e)
 
     def _select_emoji(self, emojis: List[str], mode: str) -> Optional[str]:
         """
