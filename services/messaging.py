@@ -136,9 +136,15 @@ class MessagingService:
                                 # Create user entry for ourselves and save UUID
                                 self.db.upsert_user(source_uuid, self.bot_phone)
                                 self.db.set_config('bot_uuid', source_uuid)
-                    self.logger.info("SYNC MESSAGE: Processing message we sent to destination %s, message: %s",
-                                    sync_destination[:8] if sync_destination else "unknown",
-                                    str(data_message)[:100])
+                    # Only log sync messages to groups, not private messages
+                    sent_group_info = sent_message.get('groupInfo') or sent_message.get('groupV2')
+                    if sent_group_info:
+                        self.logger.info("SYNC MESSAGE: Processing message we sent to destination %s, message: %s",
+                                        sync_destination[:8] if sync_destination else "unknown",
+                                        str(data_message)[:100])
+                    else:
+                        self.logger.debug("Sync message to private conversation %s, skipping verbose log",
+                                        sync_destination[:8] if sync_destination else "unknown")
                 elif sync_message:
                     self.logger.debug("Found sync message but no sent message data. Keys: %s", list(sync_message.keys()))
                     return False
