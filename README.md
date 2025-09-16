@@ -7,14 +7,17 @@ A UUID-based Signal bot that automatically sends emoji reactions to messages fro
 - **Automatic Emoji Reactions**: Bot reacts to messages from specific users with configured emojis
 - **UUID-based Architecture**: Uses Signal UUIDs as primary identifiers for reliability
 - **Web Management Interface**: Full-featured web UI for configuration and monitoring
+- **Attachment Support**: Downloads and stores message attachments with thumbnails in web view
 - **Group Membership Sync**: Automatically syncs group memberships from Signal
 - **Message History**: View and filter messages from monitored groups with member-level filtering
+- **Attachment Filtering**: Filter to show only messages with attachments
 - **Sentiment Analysis**: AI-powered emotion and mood analysis of group conversations using Gemini
 - **Activity Visualization**: Hourly bar charts showing message patterns throughout the day
 - **Smart Message Handling**: Properly identifies and handles text, attachments, stickers, and reactions
 - **Thread-safe Operations**: SQLite with proper locking for concurrent access
 - **Clean Setup Flow**: Device linking → group sync → user discovery → configuration
 - **Timezone Support**: All timestamps properly converted to user's local timezone
+- **Configurable Logging**: Debug flag for verbose output when troubleshooting
 
 ## Quick Start
 
@@ -42,6 +45,7 @@ Options:
   --sync-groups    Sync group memberships from Signal on startup
   --sync-only      Only sync group memberships and exit (useful for cron)
   --web-only       Start only the web interface without message polling
+  --debug          Enable debug logging for troubleshooting
   --help           Show help message
 ```
 
@@ -89,7 +93,9 @@ Access the web interface at http://YOUR_SERVER:8084:
 ### Message Filtering
 - In All Messages page, filter by specific groups
 - When a group is selected, filter further by individual members
+- Use "Show only attachments" checkbox to view messages with attachments
 - View detailed message history with sender information
+- Attachments are displayed inline with thumbnails for images
 - Full pagination support with maintained filter states
 
 ### Sentiment Analysis
@@ -126,6 +132,7 @@ The bot uses a UUID-centric design:
 - **user_reactions**: Stores emoji configurations for each user
 - **processed_messages**: Tracks all messages to avoid duplicates
 - **messages**: Stores full message history with text content
+- **attachments**: Stores message attachments with file data as BLOBs
 - **sentiment_analysis**: Caches AI-powered sentiment analysis results
 
 ## Requirements
@@ -142,15 +149,25 @@ The bot uses a UUID-centric design:
 - Ensure signal-cli is properly linked: Check Setup page
 - Verify groups are monitored: Check Groups page
 - Check logs: `tail -f signal_bot.log`
+- Enable debug logging: `python3 signal_bot.py --debug`
 
 ### Reactions not being sent
 - Verify user has reactions configured: Check Users page
 - Ensure user is sending messages in monitored groups
 - Check that reactions are enabled for the user
 
+### Attachments not displaying
+- Check that attachment was properly downloaded from signal-cli
+- Verify attachment exists in database: check logs for storage confirmation
+- Ensure web server can serve the attachment endpoint
+
 ### Group memberships not showing
 - Run sync: `python3 signal_bot.py --sync-only`
 - Or restart bot with sync: `python3 signal_bot.py --sync-groups`
+
+### Too many debug messages in logs
+- By default, bot runs with INFO level logging
+- Add `--debug` flag only when troubleshooting issues
 
 ## License
 
