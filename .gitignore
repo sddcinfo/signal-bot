@@ -1,0 +1,41 @@
+# Environment configuration files (contains sensitive data)
+.env
+
+# Log files
+*.log
+signal_bot.log
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Lock and PID files
+*.lock
+*.pid
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Temporary files
+temp/
+tmp/

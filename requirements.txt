@@ -1,0 +1,10 @@
+# Optional dependencies for Signal Bot
+# The bot runs without these - they're only needed for QR code generation in setup
+
+# QR code generation (only used during device linking setup)
+qrcode[pil]>=7.0.0
+Pillow>=8.0.0
+
+# Note: The Signal Bot uses only standard Python libraries for core functionality
+# Install these only if you want QR code generation for device linking:
+#   pip install -r requirements.txt
