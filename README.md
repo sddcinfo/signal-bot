@@ -12,6 +12,7 @@ A UUID-based Signal bot that automatically sends emoji reactions to messages fro
 - **Message History**: View and filter messages from monitored groups with member-level filtering
 - **Attachment Filtering**: Filter to show only messages with attachments
 - **Sentiment Analysis**: AI-powered emotion and mood analysis of group conversations using Gemini
+- **Message Summarization**: Anonymous AI-powered summaries of recent group conversations
 - **Activity Visualization**: Hourly bar charts showing message patterns throughout the day
 - **Smart Message Handling**: Properly identifies and handles text, attachments, stickers, and reactions
 - **Thread-safe Operations**: SQLite with proper locking for concurrent access
@@ -66,6 +67,7 @@ Access the web interface at http://YOUR_SERVER:8084:
 - **Users** (`/users`): Configure emoji reactions for users, manage discovered users
 - **All Messages** (`/all-messages`): View message history with group and member filtering
 - **Sentiment** (`/sentiment`): AI-powered sentiment analysis of group conversations
+- **Summary** (`/summary`): Anonymous AI-powered summaries of recent group conversations
 - **Activity** (`/activity`): Visualize hourly message patterns with interactive bar charts
 
 ## How It Works
@@ -106,6 +108,15 @@ Access the web interface at http://YOUR_SERVER:8084:
 5. View AI-powered analysis of emotions, mood patterns, and conversation themes
 6. Results are cached for efficiency with timezone-aware processing
 
+### Message Summarization
+1. Go to the Summary page
+2. Select a monitored group
+3. Choose how many hours to look back (default: 24)
+4. Click "Generate Summary" to get an AI-powered anonymous summary
+5. View key topics, important information, action items, and conversation tone
+6. All summaries are fully anonymous with no user identifiers
+7. Timestamps are displayed in your browser's timezone for consistency
+
 ### Activity Visualization
 1. Go to the Activity page
 2. Select a date to analyze
@@ -120,6 +131,7 @@ Access the web interface at http://YOUR_SERVER:8084:
 - **Messaging Service** (`services/messaging.py`): Message polling and reaction sending
 - **Setup Service** (`services/setup.py`): Device linking and configuration
 - **Sentiment Service** (`services/sentiment.py`): AI-powered sentiment analysis using Gemini
+- **Summarization Service** (`services/summarization.py`): Anonymous message summarization using Gemini
 - **Web Server** (`web/server.py`): Full-featured management interface with standardized UI
 - **QR Generator** (`utils/qrcode_generator.py`): ASCII QR code generation
 

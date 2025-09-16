@@ -24,6 +24,7 @@ import mimetypes
 from models.database import DatabaseManager
 from services.setup import SetupService
 from services.sentiment import SentimentAnalyzer
+from services.summarization import MessageSummarizer
 
 
 class WebHandler(BaseHTTPRequestHandler):
@@ -88,6 +89,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 self._serve_sender_messages(query)
             elif path == '/sentiment':
                 self._serve_sentiment(query)
+            elif path == '/summary':
+                self._serve_summary(query)
             elif path == '/activity':
                 self._serve_activity_visualization(query)
             elif path == '/api/status':
@@ -112,6 +115,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 self._api_sentiment_preview(query)
             elif path.startswith('/api/sentiment'):
                 self._api_sentiment_analysis(query)
+            elif path.startswith('/api/summary'):
+                self._api_summary(query)
             elif path.startswith('/attachment/'):
                 self._serve_attachment(path)
             else:
@@ -397,6 +402,7 @@ class WebHandler(BaseHTTPRequestHandler):
             ('/users', 'Users'),
             ('/all-messages', 'All Messages'),
             ('/sentiment', 'Sentiment'),
+            ('/summary', 'Summary'),
             ('/activity', 'Activity')
         ]
 
@@ -3671,6 +3677,207 @@ class WebHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self.logger.error(f"Error serving attachment {path}: {e}")
             self._send_500()
+
+    def _serve_summary(self, query):
+        """Serve the message summarization page."""
+        try:
+            # Get monitored groups for dropdown
+            groups = self.db.get_all_groups()
+            monitored_groups = [g for g in groups if g.is_monitored]
+
+            # Get selected group from query
+            selected_group_id = query.get('group_id', [None])[0]
+
+            html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Message Summary - Signal Bot</title>
+    <style>
+        {self._get_standard_css()}
+        .form-group {{ margin-bottom: 15px; }}
+        .form-group label {{ display: block; margin-bottom: 5px; font-weight: bold; }}
+        .form-group input, .form-group select, .form-group button {{ padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }}
+        .form-group button {{ background: #007cba; color: white; cursor: pointer; border: none; }}
+        .form-group button:hover {{ background: #005a87; }}
+        .summary-result {{ background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; padding: 20px; white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.8; }}
+        .loading {{ text-align: center; padding: 40px; color: #666; }}
+        .error {{ color: #dc3545; background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px; }}
+        .time-preset {{ display: inline-block; margin: 5px; }}
+        .time-preset button {{ background: #6c757d; font-size: 13px; padding: 8px 12px; }}
+        .time-preset button:hover {{ background: #5a6268; }}
+        .time-preset button.active {{ background: #28a745; }}
+        .summary-meta {{ background: #e9ecef; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 14px; }}
+        .summary-meta strong {{ color: #495057; }}
+    </style>
+</head>
+<body>
+    {self._get_page_header('📝 Message Summary', 'AI-powered summaries of recent conversations', 'summary')}
+
+    <div class="card">
+        <h2>Summarize Recent Messages</h2>
+        <form id="summaryForm">
+            <div class="form-group">
+                <label for="group-select">Select Group:</label>
+                <select id="group-select" name="group_id" required>
+                    <option value="">Choose a monitored group...</option>"""
+
+            for group in monitored_groups:
+                group_id = group.group_id
+                display_name = group.group_name or group_id[:8] + '...'
+                selected = 'selected' if group_id == selected_group_id else ''
+                html += f'<option value="{group_id}" {selected}>{display_name}</option>'
+
+            html += """
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="hours-input">Time Range:</label>
+                <input type="number" id="hours-input" name="hours" min="1" max="168" value="24" required>
+                <span style="margin-left: 10px;">hours</span>
+                <div class="time-preset">
+                    <button type="button" onclick="setHours(1)">1 hour</button>
+                    <button type="button" onclick="setHours(3)">3 hours</button>
+                    <button type="button" onclick="setHours(6)">6 hours</button>
+                    <button type="button" onclick="setHours(12)">12 hours</button>
+                    <button type="button" onclick="setHours(24)" class="active">24 hours</button>
+                    <button type="button" onclick="setHours(48)">2 days</button>
+                    <button type="button" onclick="setHours(72)">3 days</button>
+                    <button type="button" onclick="setHours(168)">1 week</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <button type="submit">Generate Summary</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card" id="loading" style="display: none;">
+        <div class="loading">
+            <h3>⏳ Analyzing messages...</h3>
+            <p>This may take a few moments depending on the number of messages.</p>
+        </div>
+    </div>
+
+    <div class="card" id="results" style="display: none;">
+        <h2>Summary Results</h2>
+        <div id="summary-meta" class="summary-meta"></div>
+        <div id="summary-content" class="summary-result"></div>
+    </div>
+</div>
+
+<script>
+    function setHours(hours) {
+        document.getElementById('hours-input').value = hours;
+        // Update button states
+        document.querySelectorAll('.time-preset button').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        event.target.classList.add('active');
+    }
+
+    document.getElementById('summaryForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        const groupId = document.getElementById('group-select').value;
+        const hours = document.getElementById('hours-input').value;
+
+        if (!groupId) {
+            alert('Please select a group');
+            return;
+        }
+
+        // Show loading, hide results
+        document.getElementById('loading').style.display = 'block';
+        document.getElementById('results').style.display = 'none';
+
+        try {
+            const response = await fetch(`/api/summary?group_id=${encodeURIComponent(groupId)}&hours=${hours}`);
+            const data = await response.json();
+
+            document.getElementById('loading').style.display = 'none';
+
+            if (data.status === 'success' || data.status === 'no_messages') {
+                const metaHtml = `
+                    <strong>Group:</strong> ${data.group_name}<br>
+                    <strong>Time Period:</strong> Last ${data.hours} hour${data.hours > 1 ? 's' : ''}<br>
+                    <strong>Messages Analyzed:</strong> ${data.message_count}<br>
+                    <strong>Generated:</strong> ${data.analyzed_at ? new Date(data.analyzed_at).toLocaleString() : 'Just now'}
+                `;
+                document.getElementById('summary-meta').innerHTML = metaHtml;
+                document.getElementById('summary-content').textContent = data.summary;
+                document.getElementById('results').style.display = 'block';
+            } else {
+                document.getElementById('summary-content').innerHTML = `<div class="error">Error: ${data.error || 'Failed to generate summary'}</div>`;
+                document.getElementById('results').style.display = 'block';
+            }
+        } catch (error) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('summary-content').innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            document.getElementById('results').style.display = 'block';
+        }
+    });
+</script>
+</body>
+</html>"""
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(html.encode())
+
+        except Exception as e:
+            self.logger.error(f"Error serving summary page: {e}")
+            self._send_500()
+
+    def _api_summary(self, query):
+        """API endpoint for message summarization."""
+        try:
+            # Get parameters
+            group_id = query.get('group_id', [None])[0]
+            hours = int(query.get('hours', [24])[0])
+            user_timezone = query.get('timezone', [None])[0]
+
+            if not group_id:
+                self._send_json_response({
+                    'status': 'error',
+                    'error': 'Group ID required'
+                })
+                return
+
+            # Get group info
+            group = self.db.get_group(group_id)
+            if not group:
+                self._send_json_response({
+                    'status': 'error',
+                    'error': 'Group not found'
+                })
+                return
+
+            group_name = group.group_name or f"Group {group_id[:8]}..."
+
+            # Create summarizer
+            summarizer = MessageSummarizer(self.db)
+
+            # Check if Gemini is available
+            if not summarizer.check_gemini_available():
+                self._send_json_response({
+                    'status': 'error',
+                    'error': 'Gemini AI is not available. Please install gemini CLI to use this feature.'
+                })
+                return
+
+            # Generate summary with user timezone
+            result = summarizer.summarize_messages(group_id, group_name, hours, user_timezone)
+
+            # Return result
+            self._send_json_response(result)
+
+        except Exception as e:
+            self.logger.error(f"Error generating summary: {e}")
+            self._send_json_response({
+                'status': 'error',
+                'error': str(e)
+            })
 
 
 class WebServer:
