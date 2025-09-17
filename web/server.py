@@ -18,6 +18,13 @@ from typing import Optional, Dict, Any
 import threading
 import uuid
 import time
+
+# Try to import markdown library, fallback if not available
+try:
+    import markdown
+    MARKDOWN_AVAILABLE = True
+except ImportError:
+    MARKDOWN_AVAILABLE = False
 import os
 import mimetypes
 
@@ -25,6 +32,20 @@ from models.database import DatabaseManager
 from services.setup import SetupService
 from services.sentiment import SentimentAnalyzer
 from services.summarization import MessageSummarizer
+
+
+def convert_markdown_to_html(text: str) -> str:
+    """Convert markdown text to HTML using Python markdown library."""
+    if not MARKDOWN_AVAILABLE or not text:
+        return text
+
+    try:
+        # Configure markdown with table extension
+        md = markdown.Markdown(extensions=['tables', 'fenced_code'])
+        return md.convert(text)
+    except Exception:
+        # Fallback to original text if conversion fails
+        return text
 
 
 class WebHandler(BaseHTTPRequestHandler):
@@ -93,6 +114,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 self._serve_summary(query)
             elif path == '/activity':
                 self._serve_activity_visualization(query)
+            elif path == '/ai-config':
+                self._serve_ai_config(query)
             elif path == '/api/status':
                 self._api_status()
             elif path == '/api/activity/hourly':
@@ -117,6 +140,12 @@ class WebHandler(BaseHTTPRequestHandler):
                 self._api_sentiment_analysis(query)
             elif path.startswith('/api/summary'):
                 self._api_summary(query)
+            elif path.startswith('/api/ai-status'):
+                self._api_ai_status(query)
+            elif path.startswith('/api/ai-config'):
+                self._api_ai_config(query)
+            elif path.startswith('/api/ollama-models'):
+                self._api_ollama_models(query)
             elif path.startswith('/attachment/'):
                 self._serve_attachment(path)
             else:
@@ -151,6 +180,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 self._api_clear_database()
             elif path == '/api/database/consolidate':
                 self._api_consolidate_users()
+            elif path == '/api/ai-config':
+                self._api_save_ai_config(post_data)
             else:
                 self._send_404()
         except (BrokenPipeError, ConnectionResetError) as e:
@@ -403,7 +434,8 @@ class WebHandler(BaseHTTPRequestHandler):
             ('/all-messages', 'All Messages'),
             ('/sentiment', 'Sentiment'),
             ('/summary', 'Summary'),
-            ('/activity', 'Activity')
+            ('/activity', 'Activity'),
+            ('/ai-config', 'AI Config')
         ]
 
         nav_html = ''
@@ -660,7 +692,6 @@ class WebHandler(BaseHTTPRequestHandler):
                             output.innerHTML += `<br><strong>Device Linking Required:</strong><br>`;
                             output.innerHTML += `<p>Scan this QR code with your Signal app to link this device:</p>`;
 
-                            console.log('QR Code data:', result.linking_qr.qr_code ? 'Present (' + result.linking_qr.qr_code.length + ' chars)' : 'Missing');
 
                             if (result.linking_qr.qr_code) {{
                                 output.innerHTML += `<div style="text-align: center; margin: 20px 0;"><img src="${{result.linking_qr.qr_code}}" alt="QR Code" style="max-width: 300px; border: 1px solid #ccc; display: block; margin: 0 auto;"></div>`;
@@ -2774,7 +2805,60 @@ class WebHandler(BaseHTTPRequestHandler):
         .form-group select, .form-group button {{ padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }}
         .form-group button {{ background: #007cba; color: white; cursor: pointer; border: none; }}
         .form-group button:hover {{ background: #005a87; }}
-        .analysis-result {{ background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; padding: 20px; white-space: pre-wrap; font-family: 'Courier New', monospace; line-height: 1.6; }}
+        .analysis-result {{
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+        }}
+        .analysis-result h1, .analysis-result h2, .analysis-result h3 {{
+            color: #495057;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }}
+        .analysis-result h1 {{ font-size: 1.5em; }}
+        .analysis-result h2 {{ font-size: 1.3em; }}
+        .analysis-result h3 {{ font-size: 1.1em; }}
+        .analysis-result ul, .analysis-result ol {{
+            margin: 10px 0;
+            padding-left: 30px;
+        }}
+        .analysis-result li {{ margin: 5px 0; }}
+        .analysis-result strong {{ color: #2c3e50; }}
+        .analysis-result em {{ color: #7f8c8d; }}
+        .analysis-result p {{ margin: 10px 0; }}
+        .analysis-result blockquote {{
+            border-left: 4px solid #007cba;
+            margin: 15px 0;
+            padding: 10px 20px;
+            background: #f1f8ff;
+        }}
+        .analysis-metadata {{
+            background: #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-left: 4px solid #007cba;
+        }}
+        .analysis-metadata h3 {{
+            margin-top: 0;
+            margin-bottom: 10px;
+            color: #007cba;
+        }}
+        .analysis-metadata p {{
+            margin: 5px 0;
+            color: #495057;
+        }}
+        .privacy-local {{
+            color: #28a745 !important;
+            font-weight: bold;
+        }}
+        .privacy-external {{
+            color: #ffc107 !important;
+            font-weight: bold;
+        }}
         .loading {{ text-align: center; padding: 40px; color: #666; }}
         .error {{ color: #dc3545; background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px; }}
     </style>
@@ -2826,6 +2910,7 @@ class WebHandler(BaseHTTPRequestHandler):
     </div>
 
     <script>
+
         let currentGroupId = null;
         let currentTimezone = null;
         let currentDate = null;
@@ -2833,7 +2918,6 @@ class WebHandler(BaseHTTPRequestHandler):
         function loadCachedResults(groupId) {
             if (!groupId) return;
 
-            console.log('Loading cached results for group:', groupId);
             currentGroupId = groupId;
             currentTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -2842,12 +2926,10 @@ class WebHandler(BaseHTTPRequestHandler):
             currentDate = dateSelect.value || new Date().toISOString().split('T')[0];
 
             const url = `/api/sentiment-cached?group_id=${encodeURIComponent(groupId)}&timezone=${encodeURIComponent(currentTimezone)}&date=${currentDate}`;
-            console.log('Fetching cached results from:', url);
 
             fetch(url)
                 .then(response => response.json())
                 .then(data => {
-                    console.log('Cached results response:', data);
                     if (data.status === 'success' && data.cached) {
                         const resultsDiv = document.getElementById('results');
                         const contentDiv = document.getElementById('analysis-content');
@@ -2856,10 +2938,7 @@ class WebHandler(BaseHTTPRequestHandler):
                         contentDiv.innerHTML = `<div class="cached-notice" style="background: #d4edda; border: 1px solid #c3e6cb; padding: 10px; border-radius: 5px; margin-bottom: 15px; color: #155724;">
                             📋 Showing cached analysis from ${currentDate}
                         </div>` +
-                        data.result.replace(/\\n/g, '<br>');
-                        console.log('Displayed cached results');
-                    } else {
-                        console.log('No cached results found');
+                        convertMarkdownToHtml(data.result);
                     }
                 })
                 .catch(error => {
@@ -2870,14 +2949,11 @@ class WebHandler(BaseHTTPRequestHandler):
         function showPreview(groupId) {
             if (!groupId) return;
 
-            console.log('Showing preview for group:', groupId);
             const url = `/api/sentiment-preview?group_id=${encodeURIComponent(groupId)}&timezone=${encodeURIComponent(currentTimezone)}&date=${currentDate}`;
-            console.log('Fetching preview from:', url);
 
             fetch(url)
                 .then(response => response.json())
                 .then(data => {
-                    console.log('Preview response:', data);
                     if (data.status === 'success') {
                         const previewDiv = document.getElementById('preview');
                         const previewContent = document.getElementById('preview-content');
@@ -2914,7 +2990,6 @@ class WebHandler(BaseHTTPRequestHandler):
                         }
 
                         previewDiv.style.display = 'block';
-                        console.log('Preview displayed successfully');
                     }
                 })
                 .catch(error => {
@@ -2936,7 +3011,7 @@ class WebHandler(BaseHTTPRequestHandler):
 
             resultsDiv.style.display = 'block';
             const actionText = forceRefresh ? 'Generating new analysis' : 'Starting sentiment analysis';
-            contentDiv.innerHTML = `<div class="loading">🤖 ${actionText} with Gemini AI...</div>`;
+            contentDiv.innerHTML = `<div class="loading">🤖 ${actionText} with AI...</div>`;
 
             // Start analysis
             const url = forceRefresh
@@ -2965,7 +3040,7 @@ class WebHandler(BaseHTTPRequestHandler):
                         .then(response => response.json())
                         .then(data => {
                             if (data.status === 'success') {
-                                contentDiv.innerHTML = data.analysis.replace(/\\n/g, '<br>');
+                                contentDiv.innerHTML = data.analysis;
                             } else if (data.status === 'error') {
                                 contentDiv.innerHTML = `<div class="error">Error: ${data.error}</div>`;
                             } else if (data.status === 'running') {
@@ -3175,9 +3250,38 @@ class WebHandler(BaseHTTPRequestHandler):
 
             if job['status'] == 'completed':
                 # Clean up job after returning result
+                job_result = job['result']
+
+                # Handle new structured format vs old string format
+                if isinstance(job_result, dict) and 'metadata' in job_result and 'analysis' in job_result:
+                    # New structured format - format metadata as HTML and convert analysis markdown
+                    metadata = job_result['metadata']
+
+                    # Privacy indicator
+                    is_local = metadata.get('is_local', False)
+                    privacy_class = 'privacy-local' if is_local else 'privacy-external'
+                    privacy_text = 'Local AI (Full Details)' if is_local else 'External AI (Anonymized)'
+                    privacy_icon = '🏠' if is_local else '🌐'
+
+                    metadata_html = f"""
+                    <div class="analysis-metadata">
+                        <h3>Sentiment Analysis: {metadata['group_name']} - {metadata['date']} ({metadata['timezone']})</h3>
+                        <p><strong>Messages analyzed:</strong> {metadata['message_count']}</p>
+                        <p><strong>Time range:</strong> {metadata['time_range']}</p>
+                        <p><strong>Timezone:</strong> {metadata['timezone']}</p>
+                        <p class="{privacy_class}"><strong>Privacy Mode:</strong> {privacy_icon} {privacy_text}</p>
+                        <p><strong>Provider:</strong> {metadata.get('provider_info', 'unknown')}</p>
+                    </div>
+                    """
+                    analysis_html = convert_markdown_to_html(job_result['analysis'])
+                    combined_html = metadata_html + analysis_html
+                else:
+                    # Old format - convert entire string
+                    combined_html = convert_markdown_to_html(job_result)
+
                 result = {
                     'status': 'success',
-                    'analysis': job['result'],
+                    'analysis': combined_html,
                     'group_id': job['group_id'],
                     'group_name': job['group_name']
                 }
@@ -3699,7 +3803,36 @@ class WebHandler(BaseHTTPRequestHandler):
         .form-group input, .form-group select, .form-group button {{ padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }}
         .form-group button {{ background: #007cba; color: white; cursor: pointer; border: none; }}
         .form-group button:hover {{ background: #005a87; }}
-        .summary-result {{ background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; padding: 20px; white-space: pre-wrap; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.8; }}
+        .summary-result {{
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.8;
+        }}
+        .summary-result h1, .summary-result h2, .summary-result h3 {{
+            color: #495057;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }}
+        .summary-result h1 {{ font-size: 1.5em; }}
+        .summary-result h2 {{ font-size: 1.3em; }}
+        .summary-result h3 {{ font-size: 1.1em; }}
+        .summary-result ul, .summary-result ol {{
+            margin: 10px 0;
+            padding-left: 30px;
+        }}
+        .summary-result li {{ margin: 5px 0; }}
+        .summary-result strong {{ color: #2c3e50; }}
+        .summary-result em {{ color: #7f8c8d; }}
+        .summary-result p {{ margin: 10px 0; }}
+        .summary-result blockquote {{
+            border-left: 4px solid #007cba;
+            margin: 15px 0;
+            padding: 10px 20px;
+            background: #f1f8ff;
+        }}
         .loading {{ text-align: center; padding: 40px; color: #666; }}
         .error {{ color: #dc3545; background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px; }}
         .time-preset {{ display: inline-block; margin: 5px; }}
@@ -3708,6 +3841,14 @@ class WebHandler(BaseHTTPRequestHandler):
         .time-preset button.active {{ background: #28a745; }}
         .summary-meta {{ background: #e9ecef; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 14px; }}
         .summary-meta strong {{ color: #495057; }}
+        .privacy-local {{
+            color: #28a745 !important;
+            font-weight: bold;
+        }}
+        .privacy-external {{
+            color: #ffc107 !important;
+            font-weight: bold;
+        }}
     </style>
 </head>
 <body>
@@ -3765,6 +3906,7 @@ class WebHandler(BaseHTTPRequestHandler):
     </div>
 </div>
 
+<script src="/static/markdown.js"></script>
 <script>
     function setHours(hours) {
         document.getElementById('hours-input').value = hours;
@@ -3797,14 +3939,22 @@ class WebHandler(BaseHTTPRequestHandler):
             document.getElementById('loading').style.display = 'none';
 
             if (data.status === 'success' || data.status === 'no_messages') {
+                // Privacy indicator based on AI provider
+                const isLocal = data.is_local || false;
+                const privacyClass = isLocal ? 'privacy-local' : 'privacy-external';
+                const privacyText = isLocal ? 'Local AI (Full Details)' : 'External AI (Anonymized)';
+                const privacyIcon = isLocal ? '🏠' : '🌐';
+
                 const metaHtml = `
                     <strong>Group:</strong> ${data.group_name}<br>
                     <strong>Time Period:</strong> Last ${data.hours} hour${data.hours > 1 ? 's' : ''}<br>
                     <strong>Messages Analyzed:</strong> ${data.message_count}<br>
-                    <strong>Generated:</strong> ${data.analyzed_at ? new Date(data.analyzed_at).toLocaleString() : 'Just now'}
+                    <strong>Generated:</strong> ${data.analyzed_at ? new Date(data.analyzed_at).toLocaleString() : 'Just now'}<br>
+                    <strong class="${privacyClass}">Privacy Mode:</strong> <span class="${privacyClass}">${privacyIcon} ${privacyText}</span><br>
+                    <strong>Provider:</strong> ${data.provider_info || data.ai_provider || 'unknown'}
                 `;
                 document.getElementById('summary-meta').innerHTML = metaHtml;
-                document.getElementById('summary-content').textContent = data.summary;
+                document.getElementById('summary-content').innerHTML = data.summary;
                 document.getElementById('results').style.display = 'block';
             } else {
                 document.getElementById('summary-content').innerHTML = `<div class="error">Error: ${data.error || 'Failed to generate summary'}</div>`;
@@ -3858,16 +4008,20 @@ class WebHandler(BaseHTTPRequestHandler):
             # Create summarizer
             summarizer = MessageSummarizer(self.db)
 
-            # Check if Gemini is available
-            if not summarizer.check_gemini_available():
+            # Check if AI is available
+            if not summarizer.check_ai_available():
                 self._send_json_response({
                     'status': 'error',
-                    'error': 'Gemini AI is not available. Please install gemini CLI to use this feature.'
+                    'error': 'No AI providers are available. Please install Ollama or Gemini CLI to use this feature.'
                 })
                 return
 
             # Generate summary with user timezone
             result = summarizer.summarize_messages(group_id, group_name, hours, user_timezone)
+
+            # Convert markdown to HTML if successful
+            if result and result.get('status') == 'success' and 'summary' in result:
+                result['summary'] = convert_markdown_to_html(result['summary'])
 
             # Return result
             self._send_json_response(result)
@@ -3878,6 +4032,553 @@ class WebHandler(BaseHTTPRequestHandler):
                 'status': 'error',
                 'error': str(e)
             })
+
+    def _serve_ai_config(self, query):
+        """Serve the AI configuration page."""
+        try:
+            html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Configuration - Signal Bot</title>
+    <style>
+        {self._get_standard_css()}
+        .provider-card {{ background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px; margin-bottom: 20px; }}
+        .provider-available {{ border-left: 4px solid #28a745; }}
+        .provider-unavailable {{ border-left: 4px solid #dc3545; }}
+        .status-badge {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase; }}
+        .status-available {{ background: #d4edda; color: #155724; }}
+        .status-unavailable {{ background: #f8d7da; color: #721c24; }}
+        .provider-details {{ margin-top: 15px; }}
+        .provider-details dt {{ font-weight: bold; margin-top: 10px; }}
+        .provider-details dd {{ margin-left: 20px; color: #666; }}
+        .refresh-btn {{ background: #007cba; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }}
+        .refresh-btn:hover {{ background: #005a87; }}
+    </style>
+</head>
+<body>
+    {self._get_page_header('🤖 AI Configuration', 'Manage local and external AI providers', 'ai-config')}
+
+    <div class="card">
+        <h2>AI Provider Configuration</h2>
+        <p style="color: #666; margin-bottom: 20px;">Configure local and external AI providers for message summarization and sentiment analysis.</p>
+
+        <button class="refresh-btn" onclick="refreshStatus()">🔄 Refresh Status</button>
+
+        <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #007cba;">
+            <h3 style="margin-top: 0; color: #007cba;">🏠 Ollama (Local AI - Recommended)</h3>
+            <p style="color: #666; margin-bottom: 15px;">Run AI models locally for privacy and faster responses. No internet required.</p>
+
+            <div class="form-group">
+                <label style="font-weight: bold;">Server URL:</label>
+                <input type="text" id="ollama-host" placeholder="http://192.168.10.160:11434" style="width: 350px; margin-top: 5px;">
+                <button onclick="testOllama()" style="margin-left: 10px; padding: 8px 15px;">Test Connection</button>
+            </div>
+
+            <div class="form-group">
+                <label style="font-weight: bold;">AI Model:</label>
+                <select id="ollama-model" style="width: 250px; margin-top: 5px;">
+                    <option value="">Select a model...</option>
+                </select>
+                <small style="display: block; color: #666; margin-top: 5px;">Available models will load after entering a valid server URL</small>
+            </div>
+
+            <div class="form-group">
+                <label style="font-weight: bold;">
+                    <input type="checkbox" id="ollama-enabled" style="margin-right: 8px;">
+                    Enable Ollama Provider
+                </label>
+            </div>
+        </div>
+
+        <div style="margin-top: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #ffc107;">
+            <h3 style="margin-top: 0; color: #856404;">🌐 Gemini (External AI)</h3>
+            <p style="color: #666; margin-bottom: 15px;">Use Google's Gemini AI service. Requires internet connection and API key setup.</p>
+
+            <div class="form-group">
+                <label style="font-weight: bold;">CLI Command Path:</label>
+                <input type="text" id="gemini-path" value="gemini" style="width: 250px; margin-top: 5px;">
+                <small style="display: block; color: #666; margin-top: 5px;">Path to the gemini CLI command (usually just "gemini")</small>
+            </div>
+
+            <div class="form-group">
+                <label style="font-weight: bold;">
+                    <input type="checkbox" id="gemini-enabled" style="margin-right: 8px;">
+                    Enable Gemini Provider
+                </label>
+            </div>
+        </div>
+
+        <div style="margin-top: 30px;">
+            <button class="refresh-btn" onclick="saveConfiguration()" style="background: #28a745; padding: 12px 25px; font-size: 16px;">💾 Save Configuration</button>
+        </div>
+
+        <div id="config-message" style="margin-top: 15px;"></div>
+    </div>
+
+    <div class="card">
+        <h2>Provider Status</h2>
+        <div id="providers-container">
+            <div class="loading" style="text-align: center; padding: 40px; color: #666;">
+                Loading AI provider status...
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+
+    let currentConfig = {{}};
+
+    async function refreshStatus() {{
+        const container = document.getElementById('providers-container');
+        container.innerHTML = '<div class="loading" style="text-align: center; padding: 40px; color: #666;">Loading AI provider status...</div>';
+
+        try {{
+            const response = await fetch('/api/ai-status');
+            const data = await response.json();
+            displayProviders(data);
+            loadConfiguration(data.configuration);
+        }} catch (error) {{
+            container.innerHTML = `<div class="error">Error loading AI status: ${{error.message}}</div>`;
+        }}
+    }}
+
+    function loadConfiguration(config) {{
+        if (!config) return;
+        currentConfig = config;
+
+        // Load Ollama configuration
+        if (config.ollama) {{
+            document.getElementById('ollama-host').value = config.ollama.host || '';
+            document.getElementById('ollama-enabled').checked = config.ollama.enabled === 'true';
+
+            // Load models if host is configured
+            if (config.ollama.host) {{
+                loadOllamaModels(config.ollama.host, config.ollama.model);
+            }}
+        }}
+
+        // Load Gemini configuration
+        if (config.gemini) {{
+            document.getElementById('gemini-path').value = config.gemini.path || 'gemini';
+            document.getElementById('gemini-enabled').checked = config.gemini.enabled === 'true';
+        }}
+    }}
+
+    async function loadOllamaModels(host, selectedModel) {{
+        const select = document.getElementById('ollama-model');
+
+        try {{
+            // Use our proxy endpoint to avoid CORS issues
+            const response = await fetch(`/api/ollama-models?host=${{encodeURIComponent(host)}}`);
+            if (response.ok) {{
+                const data = await response.json();
+                const models = data.models || [];
+
+                select.innerHTML = models.length > 0
+                    ? '<option value="">Select a model...</option>'
+                    : '<option value="">No models available</option>';
+
+                models.forEach(model => {{
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    if (model === selectedModel) {{
+                        option.selected = true;
+                    }}
+                    select.appendChild(option);
+                }});
+            }} else {{
+                select.innerHTML = '<option value="">Failed to load models</option>';
+            }}
+        }} catch (error) {{
+            select.innerHTML = '<option value="">Error loading models</option>';
+        }}
+    }}
+
+    async function testOllama() {{
+        const host = document.getElementById('ollama-host').value;
+        if (!host) {{
+            alert('Please enter Ollama host URL');
+            return;
+        }}
+
+        try {{
+            // Use our proxy endpoint to test connection
+            const response = await fetch(`/api/ollama-models?host=${{encodeURIComponent(host)}}`);
+            if (response.ok) {{
+                const data = await response.json();
+                if (data.status === 'success') {{
+                    loadOllamaModels(host);
+                    alert(`✅ Connected successfully! Found ${{data.models?.length || 0}} models.`);
+                }} else {{
+                    alert(`❌ Failed to connect: ${{data.error}}`);
+                }}
+            }} else {{
+                alert(`❌ Failed to connect: HTTP ${{response.status}}`);
+            }}
+        }} catch (error) {{
+            alert(`❌ Connection failed: ${{error.message}}`);
+        }}
+    }}
+
+    async function saveConfiguration() {{
+        const config = {{
+            ollama: {{
+                host: document.getElementById('ollama-host').value,
+                model: document.getElementById('ollama-model').value,
+                enabled: document.getElementById('ollama-enabled').checked
+            }},
+            gemini: {{
+                path: document.getElementById('gemini-path').value,
+                enabled: document.getElementById('gemini-enabled').checked
+            }}
+        }};
+
+        const messageDiv = document.getElementById('config-message');
+        messageDiv.innerHTML = '<div style="color: blue;">Saving configuration...</div>';
+
+        try {{
+            const response = await fetch('/api/ai-config', {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/json'
+                }},
+                body: JSON.stringify(config)
+            }});
+
+            const data = await response.json();
+
+            if (data.status === 'success') {{
+                messageDiv.innerHTML = '<div style="color: green;">✅ Configuration saved successfully!</div>';
+                setTimeout(() => refreshStatus(), 1000);
+            }} else {{
+                messageDiv.innerHTML = `<div style="color: red;">❌ Error: ${{data.error}}</div>`;
+            }}
+        }} catch (error) {{
+            messageDiv.innerHTML = `<div style="color: red;">❌ Error: ${{error.message}}</div>`;
+        }}
+    }}
+
+    function displayProviders(data) {{
+        const container = document.getElementById('providers-container');
+
+        if (!data.providers || data.providers.length === 0) {{
+            container.innerHTML = '<div class="error">No AI providers configured</div>';
+            return;
+        }}
+
+        let html = '';
+
+        if (data.active_provider) {{
+            html += `<div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; padding: 15px; margin-bottom: 20px;">
+                <strong>✅ Active Provider:</strong> ${{data.active_provider}}
+            </div>`;
+        }} else {{
+            html += `<div style="background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; padding: 15px; margin-bottom: 20px;">
+                <strong>❌ No AI providers available</strong><br>
+                Please install and configure Ollama or Gemini CLI below.
+            </div>`;
+        }}
+
+        data.providers.forEach(provider => {{
+            const isAvailable = provider.available;
+            const statusClass = isAvailable ? 'provider-available' : 'provider-unavailable';
+            const badgeClass = isAvailable ? 'status-available' : 'status-unavailable';
+            const statusText = isAvailable ? 'Available' : 'Unavailable';
+
+            html += `
+                <div class="provider-card ${{statusClass}}">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <h3 style="margin: 0;">${{provider.name}}</h3>
+                        <span class="status-badge ${{badgeClass}}">${{statusText}}</span>
+                    </div>
+                    <dl class="provider-details">
+                        <dt>Type:</dt>
+                        <dd>${{provider.type === 'local' ? '🏠 Local' : '🌐 External'}}</dd>
+                        ${{provider.host ? `<dt>Host:</dt><dd>${{provider.host}}</dd>` : ''}}
+                        ${{provider.model ? `<dt>Model:</dt><dd>${{provider.model}}</dd>` : ''}}
+                        ${{provider.command ? `<dt>Command:</dt><dd>${{provider.command}}</dd>` : ''}}
+                        ${{provider.available_models ? `<dt>Available Models:</dt><dd>${{provider.available_models.join(', ') || 'None'}}</dd>` : ''}}
+                    </dl>
+                </div>
+            `;
+        }});
+
+        container.innerHTML = html;
+    }}
+
+    // Load status on page load
+    document.addEventListener('DOMContentLoaded', refreshStatus);
+</script>
+</body>
+</html>"""
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(html.encode())
+
+        except Exception as e:
+            self.logger.error(f"Error serving AI config page: {e}")
+            self._send_500()
+
+    def _api_ai_status(self, query):
+        """API endpoint for AI provider status."""
+        try:
+            from services.ai_provider import get_ai_status
+            status = get_ai_status()
+            self._send_json_response(status)
+        except Exception as e:
+            self.logger.error(f"Error getting AI status: {e}")
+            self._send_json_response({
+                'error': str(e),
+                'providers': [],
+                'active_provider': None
+            })
+
+    def _api_ai_config(self, query):
+        """API endpoint for getting AI configuration."""
+        try:
+            from services.ai_provider import get_ai_status
+            status = get_ai_status()
+            self._send_json_response({
+                'status': 'success',
+                'configuration': status.get('configuration', {}),
+                'providers': status.get('providers', [])
+            })
+        except Exception as e:
+            self.logger.error(f"Error getting AI config: {e}")
+            self._send_json_response({
+                'status': 'error',
+                'error': str(e)
+            })
+
+    def _api_save_ai_config(self, post_data):
+        """API endpoint for saving AI configuration."""
+        try:
+            import json
+            data = json.loads(post_data) if post_data else {}
+
+            from services.ai_provider import save_ai_configuration
+
+            # Extract configuration from request
+            ollama_config = data.get('ollama', {})
+            gemini_config = data.get('gemini', {})
+
+            success = save_ai_configuration(
+                ollama_host=ollama_config.get('host'),
+                ollama_model=ollama_config.get('model'),
+                ollama_enabled=ollama_config.get('enabled', True),
+                gemini_path=gemini_config.get('path', 'gemini'),
+                gemini_enabled=gemini_config.get('enabled', True)
+            )
+
+            if success:
+                # Get updated status
+                from services.ai_provider import get_ai_status
+                status = get_ai_status()
+                self._send_json_response({
+                    'status': 'success',
+                    'message': 'AI configuration saved successfully',
+                    'providers': status.get('providers', []),
+                    'active_provider': status.get('active_provider')
+                })
+            else:
+                self._send_json_response({
+                    'status': 'error',
+                    'error': 'Failed to save AI configuration'
+                })
+
+        except Exception as e:
+            self.logger.error(f"Error saving AI config: {e}")
+            self._send_json_response({
+                'status': 'error',
+                'error': str(e)
+            })
+
+    def _api_ollama_models(self, query):
+        """API endpoint to fetch Ollama models through our server (avoids CORS)."""
+        try:
+            # Get the host from query params or use configured one
+            host = None
+            if query and 'host' in query:
+                host = query['host'][0]
+            else:
+                # Get from database configuration
+                host = self.db.get_config('ai.ollama.host')
+
+            if not host:
+                self._send_json_response({
+                    'status': 'error',
+                    'error': 'No Ollama host configured',
+                    'models': []
+                })
+                return
+
+            # Fetch models from Ollama
+            import requests
+            try:
+                response = requests.get(f"{host}/api/tags", timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    self._send_json_response({
+                        'status': 'success',
+                        'models': [model['name'] for model in data.get('models', [])]
+                    })
+                else:
+                    self._send_json_response({
+                        'status': 'error',
+                        'error': f'Failed to fetch models: HTTP {response.status_code}',
+                        'models': []
+                    })
+            except Exception as e:
+                self._send_json_response({
+                    'status': 'error',
+                    'error': str(e),
+                    'models': []
+                })
+
+        except Exception as e:
+            self.logger.error(f"Error fetching Ollama models: {e}")
+            self._send_json_response({
+                'status': 'error',
+                'error': str(e),
+                'models': []
+            })
+
+    def _serve_markdown_js(self):
+        """Serve the external markdown JavaScript file."""
+        try:
+            js_content = """
+// Simple markdown to HTML converter
+function convertMarkdownToHtml(markdown) {
+    let html = markdown;
+
+    // Headers
+    html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>');
+
+    // Tables - process markdown tables line by line
+    let lines = html.split('\\n');
+    let result = [];
+    let i = 0;
+
+    while (i < lines.length) {
+        let line = lines[i];
+
+        // Check if this looks like a table row
+        if (line.trim().startsWith('|') && line.trim().endsWith('|') && line.includes('|')) {
+            // Found potential table start
+            let tableLines = [];
+            let j = i;
+
+            // Collect all consecutive table-like lines
+            while (j < lines.length) {
+                let currentLine = lines[j].trim();
+                if (currentLine.startsWith('|') && currentLine.endsWith('|')) {
+                    tableLines.push(currentLine);
+                    j++;
+                } else {
+                    break;
+                }
+            }
+
+            // If we have at least 2 lines (header + separator minimum), process as table
+            if (tableLines.length >= 2) {
+                let tableHtml = '<table style="border-collapse: collapse; margin: 15px 0; width: 100%;">';
+                let headerProcessed = false;
+
+                for (let k = 0; k < tableLines.length; k++) {
+                    let tableLine = tableLines[k];
+
+                    // Skip separator rows (contain dashes)
+                    if (tableLine.includes('-')) {
+                        continue;
+                    }
+
+                    // Extract cells
+                    let cells = tableLine.slice(1, -1).split('|').map(cell => cell.trim());
+
+                    // Determine if this is header row
+                    let isHeader = !headerProcessed;
+                    if (!headerProcessed) headerProcessed = true;
+
+                    let tag = isHeader ? 'th' : 'td';
+                    let style = isHeader ?
+                        'border: 1px solid #ddd; padding: 8px; background: #f8f9fa; font-weight: bold;' :
+                        'border: 1px solid #ddd; padding: 8px;';
+
+                    tableHtml += '<tr>';
+                    cells.forEach(cell => {
+                        tableHtml += '<' + tag + ' style="' + style + '">' + cell + '</' + tag + '>';
+                    });
+                    tableHtml += '</tr>';
+                }
+
+                tableHtml += '</table>';
+                result.push(tableHtml);
+                i = j; // Skip past the table
+            } else {
+                // Not a table, just add the line
+                result.push(line);
+                i++;
+            }
+        } else {
+            // Regular line
+            result.push(line);
+            i++;
+        }
+    }
+
+    html = result.join('\\n');
+
+    // Bold text (double asterisks)
+    let parts = html.split('**');
+    html = '';
+    for (let i = 0; i < parts.length; i++) {
+        if (i % 2 === 1) {
+            html += '<strong>' + parts[i] + '</strong>';
+        } else {
+            html += parts[i];
+        }
+    }
+
+    // Italic text (single asterisks, but not part of bold)
+    html = html.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+
+    // Lists
+    html = html.replace(/^[\\*\\-] (.*)$/gm, '<li>$1</li>');
+    html = html.replace(/^\\d+\\. (.*)$/gm, '<li>$1</li>');
+
+    // Wrap consecutive list items in ul tags
+    html = html.replace(/(<li>.*?<\\/li>)(\\s*<li>.*?<\\/li>)*/gs, '<ul>$&</ul>');
+
+    // Line breaks and paragraphs
+    html = html.replace(/\\n\\n/g, '</p><p>');
+    html = html.replace(/\\n/g, '<br>');
+
+    // Wrap in paragraphs if not already wrapped
+    if (!html.startsWith('<h') && !html.startsWith('<ul>') && !html.startsWith('<table>')) {
+        html = '<p>' + html + '</p>';
+    }
+
+    return html;
+}
+"""
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/javascript')
+            self.send_header('Cache-Control', 'public, max-age=3600')  # Cache for 1 hour
+            self.end_headers()
+            self.wfile.write(js_content.encode())
+
+        except Exception as e:
+            self.logger.error(f"Error serving markdown.js: {e}")
+            self._send_500()
+
 
 
 class WebServer:

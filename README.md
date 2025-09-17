@@ -1,18 +1,19 @@
 # Signal Bot
 
-A UUID-based Signal bot that automatically sends emoji reactions to messages from configured users in monitored groups, with sentiment analysis and activity visualization capabilities.
+A UUID-based Signal bot that automatically sends emoji reactions to messages from configured users in monitored groups, with privacy-aware AI integration for sentiment analysis and message summarization.
 
 ## Features
 
 - **Automatic Emoji Reactions**: Bot reacts to messages from specific users with configured emojis
 - **UUID-based Architecture**: Uses Signal UUIDs as primary identifiers for reliability
 - **Web Management Interface**: Full-featured web UI for configuration and monitoring
+- **Privacy-Aware AI Integration**: Supports both local (Ollama) and external (Gemini) AI providers
+- **Sentiment Analysis**: AI-powered emotion and mood analysis with privacy protection
+- **Message Summarization**: Intelligent summaries of recent conversations with privacy controls
+- **Virtual Environment Support**: Automated venv setup with dependency management
 - **Attachment Support**: Downloads and stores message attachments with thumbnails in web view
 - **Group Membership Sync**: Automatically syncs group memberships from Signal
 - **Message History**: View and filter messages from monitored groups with member-level filtering
-- **Attachment Filtering**: Filter to show only messages with attachments
-- **Sentiment Analysis**: AI-powered emotion and mood analysis of group conversations using Gemini
-- **Message Summarization**: Anonymous AI-powered summaries of recent group conversations
 - **Activity Visualization**: Hourly bar charts showing message patterns throughout the day
 - **Smart Message Handling**: Properly identifies and handles text, attachments, stickers, and reactions
 - **Thread-safe Operations**: SQLite with proper locking for concurrent access
@@ -29,17 +30,23 @@ A UUID-based Signal bot that automatically sends emoji reactions to messages fro
 
 2. **Run the bot**:
    ```bash
+   ./run_bot.sh
+   ```
+   Or manually:
+   ```bash
    python3 signal_bot.py
    ```
 
 3. **Access web interface**:
    Open http://YOUR_SERVER:8084 in your browser
 
-**Note**: No Python dependencies needed! The bot uses only standard library modules.
+**Note**: The bot automatically sets up a virtual environment and installs AI dependencies when using `./run_bot.sh`.
 
 ## Command-Line Options
 
 ```bash
+./run_bot.sh [options]
+# or
 python3 signal_bot.py [options]
 
 Options:
@@ -48,7 +55,12 @@ Options:
   --web-only       Start only the web interface without message polling
   --debug          Enable debug logging for troubleshooting
   --help           Show help message
+
+run_bot.sh specific options:
+  --force          Automatically stop existing bot processes without prompting
 ```
+
+**Note**: `./run_bot.sh` passes signal_bot.py arguments through, plus handles its own `--force` option for process management.
 
 ## Setup Flow
 
@@ -66,9 +78,10 @@ Access the web interface at http://YOUR_SERVER:8084:
 - **Groups** (`/groups`): View all groups, enable/disable monitoring, see member counts
 - **Users** (`/users`): Configure emoji reactions for users, manage discovered users
 - **All Messages** (`/all-messages`): View message history with group and member filtering
-- **Sentiment** (`/sentiment`): AI-powered sentiment analysis of group conversations
-- **Summary** (`/summary`): Anonymous AI-powered summaries of recent group conversations
+- **Sentiment** (`/sentiment`): Privacy-aware AI sentiment analysis of group conversations
+- **Summary** (`/summary`): Privacy-aware AI summaries of recent group conversations
 - **Activity** (`/activity`): Visualize hourly message patterns with interactive bar charts
+- **AI Config** (`/ai-config`): Configure local (Ollama) and external (Gemini) AI providers
 
 ## How It Works
 
@@ -100,22 +113,37 @@ Access the web interface at http://YOUR_SERVER:8084:
 - Attachments are displayed inline with thumbnails for images
 - Full pagination support with maintained filter states
 
+### AI Configuration
+1. Go to the AI Config page
+2. Configure Ollama (local AI) settings:
+   - Host/IP address (e.g., 192.168.10.160:11434)
+   - Model selection from available models
+   - Enable/disable local AI
+3. Configure Gemini (external AI) settings:
+   - CLI path and enable/disable options
+4. AI providers automatically fallback from local to external
+
 ### Sentiment Analysis
 1. Go to the Sentiment page
 2. Select a monitored group
 3. Select a date to analyze (defaults to today)
 4. Click "Analyze Sentiment" or "Force Refresh"
-5. View AI-powered analysis of emotions, mood patterns, and conversation themes
-6. Results are cached for efficiency with timezone-aware processing
+5. View AI-powered analysis with privacy protection:
+   - 🏠 **Local AI**: Shows real usernames and full conversation details
+   - 🌐 **External AI**: Anonymized analysis without user identifiers
+6. Results include emotion patterns, mood progression, and conversation themes
+7. Cached for efficiency with timezone-aware processing
 
 ### Message Summarization
 1. Go to the Summary page
 2. Select a monitored group
 3. Choose how many hours to look back (default: 24)
-4. Click "Generate Summary" to get an AI-powered anonymous summary
-5. View key topics, important information, action items, and conversation tone
-6. All summaries are fully anonymous with no user identifiers
-7. Timestamps are displayed in your browser's timezone for consistency
+4. Click "Generate Summary" for privacy-aware AI analysis:
+   - 🏠 **Local AI**: Detailed summaries with participant information
+   - 🌐 **External AI**: Anonymous summaries without user identifiers
+5. View key topics, decisions, action items, and overall conversation tone
+6. Markdown formatting with proper table rendering
+7. Timestamps displayed in your browser's timezone for consistency
 
 ### Activity Visualization
 1. Go to the Activity page
@@ -130,10 +158,12 @@ Access the web interface at http://YOUR_SERVER:8084:
 - **Database** (`models/database.py`): UUID-based SQLite operations with sentiment caching
 - **Messaging Service** (`services/messaging.py`): Message polling and reaction sending
 - **Setup Service** (`services/setup.py`): Device linking and configuration
-- **Sentiment Service** (`services/sentiment.py`): AI-powered sentiment analysis using Gemini
-- **Summarization Service** (`services/summarization.py`): Anonymous message summarization using Gemini
-- **Web Server** (`web/server.py`): Full-featured management interface with standardized UI
+- **AI Provider** (`services/ai_provider.py`): Unified interface for local (Ollama) and external (Gemini) AI
+- **Sentiment Service** (`services/sentiment.py`): Privacy-aware sentiment analysis with AI provider abstraction
+- **Summarization Service** (`services/summarization.py`): Privacy-aware message summarization with AI provider abstraction
+- **Web Server** (`web/server.py`): Full-featured management interface with AI configuration and markdown rendering
 - **QR Generator** (`utils/qrcode_generator.py`): ASCII QR code generation
+- **Virtual Environment** (`run_bot.sh`): Automated venv setup and dependency management
 
 ## Database Schema
 
@@ -146,6 +176,7 @@ The bot uses a UUID-centric design:
 - **messages**: Stores full message history with text content
 - **attachments**: Stores message attachments with file data as BLOBs
 - **sentiment_analysis**: Caches AI-powered sentiment analysis results
+- **config**: Stores AI provider configuration (Ollama host, models, Gemini path)
 
 ## Requirements
 
@@ -153,7 +184,15 @@ The bot uses a UUID-centric design:
 - signal-cli (installed via `./install_signal_cli.sh`)
 - SQLite3 (included with Python)
 - Web browser for management interface
-- Gemini CLI (optional, for sentiment analysis features)
+
+### AI Features (Optional)
+- **Local AI**: Ollama server for private, local analysis
+- **External AI**: Gemini CLI for cloud-based analysis
+- **Python Dependencies**: Automatically installed via `./run_bot.sh`:
+  - `requests` for Ollama API communication
+  - `markdown` for HTML rendering with table support
+  - `google-generativeai` for Gemini integration
+  - `qrcode[pil]` for QR code generation
 
 ## Troubleshooting
 

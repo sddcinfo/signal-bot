@@ -1,30 +1,28 @@
 """
 Sentiment Analysis Service
 
-Integrates with gemini CLI to provide sentiment analysis of chat messages.
-Analyzes mood, tone, and emotional patterns in group conversations.
+Integrates with AI providers (Ollama local or Gemini external) to provide sentiment
+analysis of chat messages. Analyzes mood, tone, and emotional patterns in group conversations.
 """
 
-import subprocess
 import json
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date, timezone, timedelta
+from .ai_provider import get_ai_response, get_ai_status
 
 
 class SentimentAnalyzer:
-    """Service for analyzing sentiment of chat messages using Gemini."""
+    """Service for analyzing sentiment of chat messages using AI providers."""
 
-    def __init__(self, db_manager, gemini_path: str = "gemini"):
+    def __init__(self, db_manager):
         """
         Initialize sentiment analyzer.
 
         Args:
             db_manager: Database manager instance
-            gemini_path: Path to gemini CLI command
         """
         self.db = db_manager
-        self.gemini_path = gemini_path
         self.logger = logging.getLogger(__name__)
 
     def get_daily_messages(self, group_id: str, target_date: Optional[date] = None, user_timezone: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -122,12 +120,14 @@ class SentimentAnalyzer:
             self.logger.error("Failed to get daily messages: %s", e)
             return []
 
-    def format_messages_for_analysis(self, messages: List[Dict[str, Any]], user_timezone: Optional[str] = None) -> str:
+    def format_messages_for_analysis(self, messages: List[Dict[str, Any]], user_timezone: Optional[str] = None, anonymize: bool = True) -> str:
         """
         Format messages for sentiment analysis prompt, filtering out unnecessary content.
 
         Args:
             messages: List of message dictionaries
+            user_timezone: User's timezone for timestamp conversion
+            anonymize: Whether to anonymize usernames (True for external AI, False for local AI)
 
         Returns:
             Formatted string for analysis with optimized content
@@ -176,9 +176,9 @@ class SentimentAnalyzer:
 
         formatted = "Chat Messages for Sentiment Analysis:\n\n"
 
-        # Group messages by sender to reduce redundancy (anonymized)
+        # Group messages by sender to reduce redundancy
         sender_messages = {}
-        sender_map = {}  # Map real senders to anonymous IDs
+        sender_map = {}  # Map real senders to display names
         sender_counter = 1
 
         for msg in filtered_messages:
@@ -199,50 +199,70 @@ class SentimentAnalyzer:
             sender = msg['sender']
             text = msg['text']
 
-            # Create anonymous sender ID
-            if sender not in sender_map:
-                sender_map[sender] = f"User{sender_counter}"
-                sender_counter += 1
-            anon_sender = sender_map[sender]
+            # Create display name based on anonymization setting
+            if anonymize:
+                # Anonymous mode for external AI
+                if sender not in sender_map:
+                    sender_map[sender] = f"User{sender_counter}"
+                    sender_counter += 1
+                display_sender = sender_map[sender]
+            else:
+                # Detailed mode for local AI - use real names
+                display_sender = sender
 
             # Truncate very long messages to avoid token waste
             if len(text) > 150:
                 text = text[:147] + "..."
 
-            if anon_sender not in sender_messages:
-                sender_messages[anon_sender] = []
-            sender_messages[anon_sender].append(f"[{time_str}] {text}")
+            if display_sender not in sender_messages:
+                sender_messages[display_sender] = []
+            sender_messages[display_sender].append(f"[{time_str}] {text}")
 
         # Format grouped messages
-        for anon_sender, texts in sender_messages.items():
+        for display_sender, texts in sender_messages.items():
             if len(texts) == 1:
-                formatted += f"{anon_sender}: {texts[0]}\n"
+                formatted += f"{display_sender}: {texts[0]}\n"
             else:
-                formatted += f"{anon_sender}:\n"
+                formatted += f"{display_sender}:\n"
                 for text in texts:
                     formatted += f"  {text}\n"
                 formatted += "\n"
 
         return formatted
 
-    def analyze_sentiment(self, messages: List[Dict[str, Any]], group_name: str = "Group", user_timezone: Optional[str] = None) -> Optional[str]:
+    def analyze_sentiment(self, messages: List[Dict[str, Any]], group_name: str = "Group", user_timezone: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
-        Analyze sentiment of messages using Gemini.
+        Analyze sentiment of messages using AI provider.
 
         Args:
             messages: List of message dictionaries
             group_name: Name of the group being analyzed
+            user_timezone: User's timezone for timestamp conversion
 
         Returns:
-            Sentiment analysis result or None if failed
+            Dict with sentiment analysis result and metadata, or None if failed
         """
         if not messages:
-            return "No messages available for sentiment analysis."
+            return {
+                'analysis': "No messages available for sentiment analysis.",
+                'is_local': False,
+                'provider_info': 'none'
+            }
 
-        formatted_messages = self.format_messages_for_analysis(messages, user_timezone)
+        # First get AI provider info to determine privacy level
+        result = get_ai_response("test", timeout=5)  # Quick test to get provider info
+        is_local_ai = result.get('is_local', False)
+
+        # Format messages based on AI provider type
+        formatted_messages = self.format_messages_for_analysis(messages, user_timezone, anonymize=not is_local_ai)
+
+        # Create prompt with privacy notice
+        privacy_note = "Local AI - Full details included" if is_local_ai else "External AI - Anonymized for privacy"
 
         prompt = f"""
 Analyze the sentiment and mood of this chat conversation from the "{group_name}" group on {date.today().strftime('%Y-%m-%d')}:
+
+Privacy Note: {privacy_note}
 
 {formatted_messages}
 
@@ -258,27 +278,24 @@ Keep the analysis concise but insightful, focusing on the emotional undercurrent
 """
 
         try:
-            cmd = [self.gemini_path, "--prompt", prompt]
+            self.logger.info(f"Running sentiment analysis with AI provider (Local: {is_local_ai})")
+            self.logger.debug("AI prompt: %s", prompt[:500] + "..." if len(prompt) > 500 else prompt)
 
-            self.logger.info("Running sentiment analysis with gemini")
-            self.logger.debug("Gemini command: %s", ' '.join(cmd))
-            self.logger.debug("Gemini prompt: %s", prompt[:500] + "..." if len(prompt) > 500 else prompt)
+            # Use the AI provider abstraction layer
+            result = get_ai_response(prompt, timeout=60)
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-
-            if result.returncode != 0:
-                self.logger.error("Gemini analysis failed: %s", result.stderr)
+            if result['success']:
+                provider_name = result.get('provider', 'unknown')
+                self.logger.info(f"Sentiment analysis completed using {provider_name} provider")
+                return {
+                    'analysis': result['response'],
+                    'is_local': result.get('is_local', False),
+                    'provider_info': f"{provider_name} ({'Local' if result.get('is_local', False) else 'External'})"
+                }
+            else:
+                self.logger.error(f"AI analysis failed: {result.get('error', 'Unknown error')}")
                 return None
 
-            if not result.stdout.strip():
-                self.logger.warning("Gemini returned empty response")
-                return None
-
-            return result.stdout.strip()
-
-        except subprocess.TimeoutExpired:
-            self.logger.error("Gemini analysis timed out")
-            return None
         except Exception as e:
             self.logger.error("Failed to run sentiment analysis: %s", e)
             return None
@@ -333,13 +350,11 @@ Keep the analysis concise but insightful, focusing on the emotional undercurrent
                         len(messages), group_name, target_date.strftime('%Y-%m-%d'))
 
         # Perform sentiment analysis
-        analysis = self.analyze_sentiment(messages, group_name, user_timezone)
+        analysis_result = self.analyze_sentiment(messages, group_name, user_timezone)
 
-        if analysis:
-            # Add metadata with timezone info
+        if analysis_result and analysis_result.get('analysis'):
+            # Prepare metadata
             tz_display = user_timezone or 'UTC'
-            header = f"Sentiment Analysis: {group_name} - {target_date.strftime('%Y-%m-%d')} ({tz_display})\n"
-            header += f"Messages analyzed: {len(messages)}\n"
 
             # Convert time range to user timezone
             if user_timezone and messages:
@@ -353,21 +368,38 @@ Keep the analysis concise but insightful, focusing on the emotional undercurrent
 
                     first_local = first_utc.astimezone(user_tz).strftime('%H:%M')
                     last_local = last_utc.astimezone(user_tz).strftime('%H:%M')
-
-                    header += f"Time range: {first_local} - {last_local}\n"
+                    time_range = f"{first_local} - {last_local}"
                 except (ImportError, Exception):
                     # Fallback to UTC times
-                    header += f"Time range: {messages[0]['time'].split()[1][:5]} - {messages[-1]['time'].split()[1][:5]}\n"
+                    time_range = f"{messages[0]['time'].split()[1][:5]} - {messages[-1]['time'].split()[1][:5]}"
             else:
-                header += f"Time range: {messages[0]['time'].split()[1][:5]} - {messages[-1]['time'].split()[1][:5]}\n"
+                time_range = f"{messages[0]['time'].split()[1][:5]} - {messages[-1]['time'].split()[1][:5]}"
 
-            header += f"Timezone: {tz_display}\n\n"
+            # Return structured data instead of combined string
+            result = {
+                'metadata': {
+                    'group_name': group_name,
+                    'date': target_date.strftime('%Y-%m-%d'),
+                    'timezone': tz_display,
+                    'message_count': len(messages),
+                    'time_range': time_range,
+                    'is_local': analysis_result.get('is_local', False),
+                    'provider_info': analysis_result.get('provider_info', 'unknown')
+                },
+                'analysis': analysis_result['analysis']
+            }
 
-            full_result = header + analysis
+            # For backward compatibility with database storage, create combined string
+            header = f"Sentiment Analysis: {group_name} - {target_date.strftime('%Y-%m-%d')} ({tz_display})\n"
+            header += f"Messages analyzed: {len(messages)}\n"
+            header += f"Time range: {time_range}\n"
+            header += f"Timezone: {tz_display}\n"
+            header += f"Provider: {analysis_result.get('provider_info', 'unknown')}\n\n"
+            full_result = header + analysis_result['analysis']
 
             # Store the result in database
             self.db.store_sentiment_analysis(group_id, target_date, len(messages), full_result)
 
-            return full_result
+            return result
 
         return None

@@ -1,33 +1,32 @@
 """
 Message Summarization Service
 
-Uses Gemini AI to provide intelligent summaries of chat messages from the last N hours.
-Highlights key topics, decisions, and important information from group conversations.
+Uses AI providers (Ollama local or Gemini external) to provide intelligent summaries
+of chat messages from the last N hours. Highlights key topics, decisions, and important
+information from group conversations.
 """
 
-import subprocess
 import json
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
+from .ai_provider import get_ai_response, get_ai_status
 
 
 class MessageSummarizer:
-    """Service for summarizing recent chat messages using Gemini."""
+    """Service for summarizing recent chat messages using AI providers."""
 
-    def __init__(self, db_manager, gemini_path: str = "gemini"):
+    def __init__(self, db_manager):
         """
         Initialize message summarizer.
 
         Args:
             db_manager: Database manager instance
-            gemini_path: Path to gemini CLI command
         """
         self.db = db_manager
-        self.gemini_path = gemini_path
         self.logger = logging.getLogger(__name__)
 
-    def get_recent_messages(self, group_id: str, hours: int = 24, user_timezone: str = None) -> str:
+    def get_recent_messages(self, group_id: str, hours: int = 24, user_timezone: str = None, anonymize: bool = True) -> str:
         """
         Get messages from the last N hours and format them for analysis.
 
@@ -35,6 +34,7 @@ class MessageSummarizer:
             group_id: The group to analyze
             hours: Number of hours to look back
             user_timezone: User's timezone for consistent timestamp display
+            anonymize: Whether to anonymize usernames (True for external AI, False for local AI)
 
         Returns:
             Formatted string of messages
@@ -57,7 +57,7 @@ class MessageSummarizer:
         # Sort by timestamp (oldest first for chronological order)
         recent_messages.sort(key=lambda x: x['timestamp'] or 0)
 
-        # Format messages for analysis (anonymous)
+        # Format messages for analysis with privacy awareness
         formatted = []
 
         # Setup timezone conversion if user timezone is provided
@@ -68,6 +68,10 @@ class MessageSummarizer:
                 user_tz = zoneinfo.ZoneInfo(user_timezone)
             except (ImportError, Exception):
                 self.logger.warning(f"Could not use timezone {user_timezone}, falling back to UTC")
+
+        # Create sender mapping for anonymization if needed
+        sender_map = {}
+        sender_counter = 1
 
         for msg in recent_messages:
             # Format timestamp with user's timezone if available
@@ -80,21 +84,40 @@ class MessageSummarizer:
 
             timestamp = msg_time.strftime('%H:%M')
 
-            # Get message text
+            # Get message text and sender
             text = msg.get('message_text', '')
+            sender = msg.get('display_name') or msg.get('friendly_name') or msg.get('sender_uuid', 'Unknown')
 
             # Skip empty messages
             if not text or text.strip() == '':
                 continue
 
-            # Anonymous format - just timestamp and message
-            formatted.append(f"[{timestamp}] {text}")
+            # Skip system messages
+            if not sender or sender.lower() in ['system']:
+                continue
+
+            # Create display name based on anonymization setting
+            if anonymize:
+                # Anonymous mode for external AI
+                if sender not in sender_map:
+                    sender_map[sender] = f"User{sender_counter}"
+                    sender_counter += 1
+                display_sender = sender_map[sender]
+            else:
+                # Detailed mode for local AI - use real names
+                display_sender = sender
+
+            # Format message with or without sender based on privacy setting
+            if anonymize:
+                formatted.append(f"[{timestamp}] {text}")
+            else:
+                formatted.append(f"[{timestamp}] {display_sender}: {text}")
 
         return "\n".join(formatted)
 
     def summarize_messages(self, group_id: str, group_name: str, hours: int = 24, user_timezone: str = None) -> Optional[Dict[str, Any]]:
         """
-        Summarize messages from the last N hours using Gemini AI.
+        Summarize messages from the last N hours using AI provider.
 
         Args:
             group_id: The group to analyze
@@ -105,8 +128,12 @@ class MessageSummarizer:
         Returns:
             Dictionary with summary results or None if failed
         """
-        # Get recent messages with user timezone
-        messages_text = self.get_recent_messages(group_id, hours, user_timezone)
+        # First get AI provider info to determine privacy level
+        result = get_ai_response("test", timeout=5)  # Quick test to get provider info
+        is_local_ai = result.get('is_local', False)
+
+        # Get recent messages with privacy setting based on AI provider type
+        messages_text = self.get_recent_messages(group_id, hours, user_timezone, anonymize=not is_local_ai)
 
         if not messages_text:
             return {
@@ -120,14 +147,19 @@ class MessageSummarizer:
         # Count messages
         message_count = len(messages_text.split('\n'))
 
-        # Prepare prompt for Gemini (anonymous version)
-        prompt = f"""Analyze the following anonymous chat conversation from the last {hours} hours and provide a comprehensive summary.
+        # Create prompt with privacy notice
+        privacy_note = "Local AI - Full details included" if is_local_ai else "External AI - Anonymized for privacy"
+        anonymous_note = "" if is_local_ai else "\n\nImportant: This is an ANONYMOUS summary. Do NOT attempt to identify or reference specific participants.\nFocus only on the content and themes of the conversation itself."
+
+        prompt = f"""Analyze the following chat conversation from the last {hours} hours and provide a comprehensive summary.
+
+Privacy Note: {privacy_note}
 
 Group: {group_name}
 Time Period: Last {hours} hours
 Message Count: {message_count}
 
-Anonymous Messages (timestamps only, no user identifiers):
+{'Chat Messages (with participant details):' if is_local_ai else 'Chat Messages:'}
 {messages_text}
 
 Please provide a structured summary including:
@@ -136,64 +168,42 @@ Please provide a structured summary including:
 3. **Action Items**: Any tasks, commitments, or follow-ups mentioned
 4. **Overall Activity**: General conversation patterns and flow
 5. **Tone & Sentiment**: Overall mood and energy of the conversation
-6. **Notable Moments**: Interesting, funny, or significant exchanges
-
-Important: This is an ANONYMOUS summary. Do NOT attempt to identify or reference specific participants.
-Focus only on the content and themes of the conversation itself.
+6. **Notable Moments**: Interesting, funny, or significant exchanges{anonymous_note}
 
 Format the response as clear, concise bullet points under each section.
 If a section has no relevant content, you can skip it.
 Keep the summary focused on what would be most useful for someone who missed the conversation."""
 
         try:
-            # Run gemini command with the prompt
-            result = subprocess.run(
-                [self.gemini_path, prompt],
-                capture_output=True,
-                text=True,
-                timeout=60  # 60 second timeout
-            )
+            self.logger.info("Running message summarization with AI provider")
+            self.logger.debug("AI prompt: %s", prompt[:500] + "..." if len(prompt) > 500 else prompt)
 
-            if result.returncode == 0 and result.stdout:
-                summary_text = result.stdout.strip()
+            # Use the AI provider abstraction layer
+            result = get_ai_response(prompt, timeout=60)
 
+            if result['success']:
+                self.logger.info(f"Summarization completed using {result.get('provider', 'unknown')} provider")
                 return {
                     'status': 'success',
-                    'summary': summary_text,
+                    'summary': result['response'],
                     'group_name': group_name,
                     'hours': hours,
                     'message_count': message_count,
-                    'analyzed_at': datetime.now().isoformat()
+                    'analyzed_at': datetime.now().isoformat(),
+                    'ai_provider': result.get('provider', 'unknown'),
+                    'is_local': result.get('is_local', False),
+                    'provider_info': f"{result.get('provider', 'unknown')} ({'Local' if result.get('is_local', False) else 'External'})"
                 }
             else:
-                error_msg = result.stderr if result.stderr else "Unknown error"
-                self.logger.error(f"Gemini command failed: {error_msg}")
+                self.logger.error(f"AI summarization failed: {result.get('error', 'Unknown error')}")
                 return {
                     'status': 'error',
-                    'error': f"AI analysis failed: {error_msg}",
+                    'error': f"AI analysis failed: {result.get('error', 'Unknown error')}",
                     'group_name': group_name,
                     'hours': hours,
                     'message_count': message_count
                 }
 
-        except subprocess.TimeoutExpired:
-            self.logger.error("Gemini command timed out")
-            return {
-                'status': 'error',
-                'error': "AI analysis timed out",
-                'group_name': group_name,
-                'hours': hours,
-                'message_count': message_count
-            }
-        except FileNotFoundError:
-            self.logger.error(f"Gemini command not found at {self.gemini_path}")
-            return {
-                'status': 'error',
-                'error': "Gemini AI not available",
-                'group_name': group_name,
-                'hours': hours,
-                'message_count': message_count
-            }
         except Exception as e:
             self.logger.error(f"Error running summarization: {e}")
             return {
@@ -204,14 +214,10 @@ Keep the summary focused on what would be most useful for someone who missed the
                 'message_count': message_count
             }
 
-    def check_gemini_available(self) -> bool:
-        """Check if gemini CLI is available."""
+    def check_ai_available(self) -> bool:
+        """Check if any AI provider is available."""
         try:
-            result = subprocess.run(
-                [self.gemini_path, "--help"],
-                capture_output=True,
-                timeout=5
-            )
-            return result.returncode == 0
+            status = get_ai_status()
+            return status.get('active_provider') is not None
         except:
             return False

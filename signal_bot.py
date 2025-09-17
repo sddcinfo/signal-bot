@@ -62,6 +62,10 @@ class SignalBot:
         self.messaging = None  # Will be initialized after bot is configured
         self.web_server = None  # Will be initialized in start_web_interface
 
+        # Initialize AI provider manager with database
+        from services.ai_provider import initialize_ai_manager
+        initialize_ai_manager(db_manager=self.db, logger=self.logger)
+
         # Threading components
         self.web_thread = None
         self.polling_thread = None
