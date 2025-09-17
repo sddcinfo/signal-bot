@@ -146,6 +146,10 @@ class WebHandler(BaseHTTPRequestHandler):
                 self._api_ai_config(query)
             elif path.startswith('/api/ollama-models'):
                 self._api_ollama_models(query)
+            elif path.startswith('/api/ollama-preload'):
+                self._api_ollama_preload(query)
+            elif path.startswith('/api/ollama-status'):
+                self._api_ollama_status(query)
             elif path.startswith('/attachment/'):
                 self._serve_attachment(path)
             else:
@@ -3780,7 +3784,7 @@ class WebHandler(BaseHTTPRequestHandler):
 
         except Exception as e:
             self.logger.error(f"Error serving attachment {path}: {e}")
-            self._send_500()
+            self._send_error(500, "Internal server error")
 
     def _serve_summary(self, query):
         """Serve the message summarization page."""
@@ -3977,7 +3981,7 @@ class WebHandler(BaseHTTPRequestHandler):
 
         except Exception as e:
             self.logger.error(f"Error serving summary page: {e}")
-            self._send_500()
+            self._send_error(500, "Internal server error")
 
     def _api_summary(self, query):
         """API endpoint for message summarization."""
@@ -4110,6 +4114,8 @@ class WebHandler(BaseHTTPRequestHandler):
 
         <div style="margin-top: 30px;">
             <button class="refresh-btn" onclick="saveConfiguration()" style="background: #28a745; padding: 12px 25px; font-size: 16px;">💾 Save Configuration</button>
+            <button class="refresh-btn" onclick="preloadModel()" style="background: #17a2b8; padding: 12px 25px; font-size: 16px; margin-left: 10px;">🚀 Preload Selected Model</button>
+            <button class="refresh-btn" onclick="refreshStatus()" style="background: #6c757d; padding: 12px 25px; font-size: 16px; margin-left: 10px;">🔄 Refresh Status</button>
         </div>
 
         <div id="config-message" style="margin-top: 15px;"></div>
@@ -4298,15 +4304,60 @@ class WebHandler(BaseHTTPRequestHandler):
                         <dt>Type:</dt>
                         <dd>${{provider.type === 'local' ? '🏠 Local' : '🌐 External'}}</dd>
                         ${{provider.host ? `<dt>Host:</dt><dd>${{provider.host}}</dd>` : ''}}
-                        ${{provider.model ? `<dt>Model:</dt><dd>${{provider.model}}</dd>` : ''}}
+                        ${{provider.model ? `<dt>Current Model:</dt><dd>${{provider.model}} ${{provider.current_model_loaded ? '✅' : '⏸️'}}</dd>` : ''}}
                         ${{provider.command ? `<dt>Command:</dt><dd>${{provider.command}}</dd>` : ''}}
-                        ${{provider.available_models ? `<dt>Available Models:</dt><dd>${{provider.available_models.join(', ') || 'None'}}</dd>` : ''}}
+
+                        ${{provider.type === 'local' && provider.available ? `
+                            <dt>Memory Usage:</dt>
+                            <dd>📊 ${{provider.total_vram_usage_gb || 0}} GB VRAM (${{provider.loaded_models_count || 0}} models loaded)</dd>
+
+                            ${{provider.loaded_models && provider.loaded_models.length > 0 ? `
+                                <dt>Loaded Models:</dt>
+                                <dd>
+                                    ${{provider.loaded_models.map(model => `
+                                        <div style="background: #f8f9fa; padding: 8px; margin: 4px 0; border-radius: 3px; border-left: 3px solid ${{model.is_current_model ? '#28a745' : '#6c757d'}};">
+                                            <strong>${{model.name}}</strong> ${{model.is_current_model ? '🎯' : ''}}
+                                            <br><small>📏 ${{model.parameter_size}} | 💾 ${{model.size_vram_gb}}GB VRAM | 🔧 ${{model.quantization || 'N/A'}} | 📝 ${{(model.context_length / 1000).toFixed(0)}}K context</small>
+                                        </div>
+                                    `).join('')}}
+                                </dd>
+                            ` : ''}}
+
+                            <dt>Available Models:</dt>
+                            <dd>📦 ${{provider.total_available_models || 0}} models (${{provider.total_models_size_gb || 0}} GB total)</dd>
+                        ` : ''}}
+
+                        ${{provider.available_models && provider.type !== 'local' ? `<dt>Available Models:</dt><dd>${{provider.available_models.join(', ') || 'None'}}</dd>` : ''}}
                     </dl>
                 </div>
             `;
         }});
 
         container.innerHTML = html;
+    }}
+
+    async function preloadModel() {{
+        const model = document.getElementById('ollama-model').value;
+        if (!model) {{
+            document.getElementById('config-message').innerHTML = '<div style="color: red;">Please select an Ollama model first</div>';
+            return;
+        }}
+
+        const messageDiv = document.getElementById('config-message');
+        messageDiv.innerHTML = '<div style="color: blue;">🚀 Loading model... This may take several minutes for large models.</div>';
+
+        try {{
+            const response = await fetch(`/api/ollama-preload?model=${{encodeURIComponent(model)}}`);
+            const data = await response.json();
+
+            if (data.status === 'success') {{
+                messageDiv.innerHTML = `<div style="color: green;">✅ Model ${{model}} loaded successfully!</div>`;
+            }} else {{
+                messageDiv.innerHTML = `<div style="color: red;">❌ Failed to load model: ${{data.error}}</div>`;
+            }}
+        }} catch (error) {{
+            messageDiv.innerHTML = `<div style="color: red;">❌ Error loading model: ${{error.message}}</div>`;
+        }}
     }}
 
     // Load status on page load
@@ -4322,7 +4373,7 @@ class WebHandler(BaseHTTPRequestHandler):
 
         except Exception as e:
             self.logger.error(f"Error serving AI config page: {e}")
-            self._send_500()
+            self._send_error(500, "Internal server error")
 
     def _api_ai_status(self, query):
         """API endpoint for AI provider status."""
@@ -4446,6 +4497,89 @@ class WebHandler(BaseHTTPRequestHandler):
                 'status': 'error',
                 'error': str(e),
                 'models': []
+            })
+
+    def _api_ollama_preload(self, query):
+        """API endpoint to preload an Ollama model."""
+        try:
+            model = query.get('model', [None])[0]
+            if not model:
+                self._send_json_response({
+                    'status': 'error',
+                    'error': 'Model parameter required'
+                })
+                return
+
+            # Get AI provider manager
+            from services.ai_provider import get_ai_manager
+            manager = get_ai_manager()
+
+            # Find Ollama provider
+            ollama_provider = None
+            for provider in manager.providers:
+                if hasattr(provider, 'preload_model'):
+                    ollama_provider = provider
+                    break
+
+            if not ollama_provider:
+                self._send_json_response({
+                    'status': 'error',
+                    'error': 'Ollama provider not available'
+                })
+                return
+
+            # Update the provider's model and preload it
+            ollama_provider.model = model
+            result = ollama_provider.preload_model(timeout=120)  # 2 minute timeout for large models
+
+            self._send_json_response({
+                'status': 'success' if result['success'] else 'error',
+                **result
+            })
+
+        except Exception as e:
+            self.logger.error(f"Error preloading Ollama model: {e}")
+            self._send_json_response({
+                'status': 'error',
+                'error': str(e)
+            })
+
+    def _api_ollama_status(self, query):
+        """API endpoint to get currently loaded Ollama models."""
+        try:
+            # Get AI provider manager
+            from services.ai_provider import get_ai_manager
+            manager = get_ai_manager()
+
+            # Find Ollama provider
+            ollama_provider = None
+            for provider in manager.providers:
+                if hasattr(provider, 'get_loaded_models'):
+                    ollama_provider = provider
+                    break
+
+            if not ollama_provider:
+                self._send_json_response({
+                    'status': 'error',
+                    'error': 'Ollama provider not available',
+                    'loaded_models': []
+                })
+                return
+
+            loaded_models = ollama_provider.get_loaded_models()
+
+            self._send_json_response({
+                'status': 'success',
+                'loaded_models': loaded_models,
+                'count': len(loaded_models)
+            })
+
+        except Exception as e:
+            self.logger.error(f"Error getting Ollama status: {e}")
+            self._send_json_response({
+                'status': 'error',
+                'error': str(e),
+                'loaded_models': []
             })
 
     def _serve_markdown_js(self):
@@ -4577,7 +4711,7 @@ function convertMarkdownToHtml(markdown) {
 
         except Exception as e:
             self.logger.error(f"Error serving markdown.js: {e}")
-            self._send_500()
+            self._send_error(500, "Internal server error")
 
 
 

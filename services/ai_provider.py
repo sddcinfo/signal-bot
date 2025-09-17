@@ -138,6 +138,7 @@ class OllamaProvider(AIProvider):
         self.model = model or "llama3.2"
         self.api_url = f"{self.host}/api/generate"
         self.models_url = f"{self.host}/api/tags"
+        self.ps_url = f"{self.host}/api/ps"
 
     def is_available(self) -> bool:
         """Check if Ollama service is available and model is installed."""
@@ -167,70 +168,137 @@ class OllamaProvider(AIProvider):
             self.logger.debug(f"Ollama availability check failed: {e}")
             return False
 
-    def generate_response(self, prompt: str, timeout: int = 60) -> Dict[str, Any]:
-        """Generate response using Ollama API."""
+    def is_model_loaded(self) -> bool:
+        """Check if the model is currently loaded in memory using /api/ps endpoint."""
         try:
-            payload = {
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.7,
-                    "num_predict": 2000
-                }
-            }
-
-            response = requests.post(
-                self.api_url,
-                json=payload,
-                timeout=timeout,
-                headers={'Content-Type': 'application/json'}
-            )
-
+            response = requests.get(self.ps_url, timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                return {
-                    'success': True,
-                    'response': data.get('response', '').strip(),
-                    'provider': 'ollama',
-                    'model': self.model,
-                    'stats': {
-                        'eval_count': data.get('eval_count'),
-                        'eval_duration': data.get('eval_duration'),
-                        'total_duration': data.get('total_duration')
+                loaded_models = data.get('models', [])
+
+                # Check if our model is in the loaded models list
+                for loaded_model in loaded_models:
+                    model_name = loaded_model.get('name', '')
+                    # Check exact match or partial match (for versioned models)
+                    if self.model == model_name or self.model in model_name:
+                        self.logger.debug(f"Model {self.model} is already loaded")
+                        return True
+
+                self.logger.debug(f"Model {self.model} is not loaded. Loaded models: {[m.get('name') for m in loaded_models]}")
+                return False
+
+            return False
+
+        except Exception as e:
+            self.logger.debug(f"Failed to check loaded models: {e}")
+            return False
+
+    def ensure_model_loaded(self, timeout: int = 30) -> bool:
+        """Check if the model is loaded and ready for inference."""
+        # Just check if model is already loaded (fast check)
+        return self.is_model_loaded()
+
+    def generate_response(self, prompt: str, timeout: int = 60) -> Dict[str, Any]:
+        """Generate response using Ollama API with intelligent model loading."""
+        max_retries = 3
+        retry_delay = 15  # seconds - longer delay for model loading
+
+        for attempt in range(max_retries):
+            # Check if model is already loaded (fast check)
+            if self.is_model_loaded():
+                self.logger.debug(f"Model {self.model} is already loaded, proceeding with inference")
+            else:
+                self.logger.info(f"Model {self.model} not loaded, will load during inference (attempt {attempt + 1}/{max_retries})")
+
+            try:
+                payload = {
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0.7,
+                        "num_predict": 2000
                     }
                 }
-            else:
+
+                # Send the actual user query - Ollama will load the model if needed
+                response = requests.post(
+                    self.api_url,
+                    json=payload,
+                    timeout=timeout,
+                    headers={'Content-Type': 'application/json'}
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    return {
+                        'success': True,
+                        'response': data.get('response', '').strip(),
+                        'provider': 'ollama',
+                        'model': self.model,
+                        'stats': {
+                            'eval_count': data.get('eval_count'),
+                            'eval_duration': data.get('eval_duration'),
+                            'total_duration': data.get('total_duration')
+                        }
+                    }
+                elif response.status_code == 500:
+                    # Handle model loading errors
+                    try:
+                        error_data = response.json()
+                        if "llm server loading model" in error_data.get('error', ''):
+                            if attempt < max_retries - 1:
+                                self.logger.info(f"Model {self.model} is loading, waiting {retry_delay}s before retry {attempt + 2}/{max_retries}...")
+                                import time
+                                time.sleep(retry_delay)
+                                continue  # Retry with the same prompt
+                            else:
+                                return {
+                                    'success': False,
+                                    'error': f"Model {self.model} is still loading after {max_retries} attempts. Large models can take several minutes to load. Please try again later.",
+                                    'provider': 'ollama'
+                                }
+                    except:
+                        pass
+
+                # Other errors - return immediately
                 return {
                     'success': False,
                     'error': f"Ollama API error: {response.status_code} - {response.text}",
                     'provider': 'ollama'
                 }
 
-        except requests.exceptions.Timeout:
-            return {
-                'success': False,
-                'error': "Ollama API timed out",
-                'provider': 'ollama'
-            }
-        except requests.exceptions.ConnectionError:
-            return {
-                'success': False,
-                'error': "Cannot connect to Ollama service",
-                'provider': 'ollama'
-            }
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-                'provider': 'ollama'
-            }
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    self.logger.warning(f"Request timeout on attempt {attempt + 1}, retrying...")
+                    continue
+                return {
+                    'success': False,
+                    'error': "Ollama API timed out after multiple attempts",
+                    'provider': 'ollama'
+                }
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    self.logger.warning(f"Request failed on attempt {attempt + 1}: {e}, retrying...")
+                    continue
+                return {
+                    'success': False,
+                    'error': str(e),
+                    'provider': 'ollama'
+                }
+
+        # This shouldn't be reached, but just in case
+        return {
+            'success': False,
+            'error': f"Failed to get response from {self.model} after {max_retries} attempts",
+            'provider': 'ollama'
+        }
 
     def get_provider_name(self) -> str:
         return f"Ollama ({self.model})"
 
     def get_provider_info(self) -> Dict[str, Any]:
-        """Get Ollama provider information including available models."""
+        """Get comprehensive Ollama provider information including loaded models."""
         info = {
             'name': 'Ollama',
             'type': 'local',
@@ -239,14 +307,59 @@ class OllamaProvider(AIProvider):
             'available': self.is_available()
         }
 
-        # Try to get model list
+        # Get available models
         try:
             response = requests.get(self.models_url, timeout=5)
             if response.status_code == 200:
                 data = response.json()
-                info['available_models'] = [model['name'] for model in data.get('models', [])]
+                available_models = data.get('models', [])
+                info['available_models'] = [model['name'] for model in available_models]
+                info['total_available_models'] = len(available_models)
+
+                # Calculate total size of available models
+                total_size = sum(model.get('size', 0) for model in available_models)
+                info['total_models_size_gb'] = round(total_size / (1024**3), 2)
+            else:
+                info['available_models'] = []
+                info['total_available_models'] = 0
+                info['total_models_size_gb'] = 0
         except Exception:
             info['available_models'] = []
+            info['total_available_models'] = 0
+            info['total_models_size_gb'] = 0
+
+        # Get currently loaded models with detailed information
+        try:
+            loaded_models = self.get_loaded_models()
+            info['loaded_models'] = []
+            info['loaded_models_count'] = len(loaded_models)
+
+            total_vram = 0
+            for model in loaded_models:
+                model_info = {
+                    'name': model.get('name'),
+                    'size_gb': round(model.get('size', 0) / (1024**3), 2),
+                    'size_vram_gb': round(model.get('size_vram', 0) / (1024**3), 2),
+                    'parameter_size': model.get('details', {}).get('parameter_size'),
+                    'quantization': model.get('details', {}).get('quantization_level'),
+                    'format': model.get('details', {}).get('format'),
+                    'family': model.get('details', {}).get('family'),
+                    'context_length': model.get('context_length'),
+                    'expires_at': model.get('expires_at'),
+                    'is_current_model': model.get('name') == self.model
+                }
+                info['loaded_models'].append(model_info)
+                total_vram += model.get('size_vram', 0)
+
+            info['total_vram_usage_gb'] = round(total_vram / (1024**3), 2)
+            info['current_model_loaded'] = self.is_model_loaded()
+
+        except Exception as e:
+            info['loaded_models'] = []
+            info['loaded_models_count'] = 0
+            info['total_vram_usage_gb'] = 0
+            info['current_model_loaded'] = False
+            info['error'] = f"Failed to get loaded models: {str(e)}"
 
         return info
 
@@ -259,6 +372,83 @@ class OllamaProvider(AIProvider):
                 return [model['name'] for model in data.get('models', [])]
         except Exception:
             return []
+
+    def get_loaded_models(self) -> List[Dict[str, Any]]:
+        """Get list of currently loaded models with details."""
+        try:
+            response = requests.get(self.ps_url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('models', [])
+        except Exception as e:
+            self.logger.debug(f"Failed to get loaded models: {e}")
+            return []
+
+    def preload_model(self, timeout: int = 60) -> Dict[str, Any]:
+        """Preload the model to ensure it's ready for inference."""
+        self.logger.info(f"Preloading model {self.model}...")
+
+        # Check if already loaded
+        if self.is_model_loaded():
+            self.logger.info(f"Model {self.model} is already loaded")
+            return {
+                'success': True,
+                'message': f"Model {self.model} is already loaded and ready",
+                'model': self.model
+            }
+
+        try:
+            # Send a minimal request to trigger model loading
+            payload = {
+                "model": self.model,
+                "prompt": "Hello",
+                "stream": False,
+                "options": {
+                    "num_predict": 1
+                }
+            }
+
+            response = requests.post(
+                self.api_url,
+                json=payload,
+                timeout=timeout,
+                headers={'Content-Type': 'application/json'}
+            )
+
+            if response.status_code == 200:
+                self.logger.info(f"Model {self.model} loaded successfully")
+                return {
+                    'success': True,
+                    'message': f"Model {self.model} loaded and ready",
+                    'model': self.model
+                }
+            else:
+                error_text = response.text
+                if response.status_code == 500:
+                    try:
+                        error_data = response.json()
+                        if "llm server loading model" in error_data.get('error', ''):
+                            return {
+                                'success': False,
+                                'error': f"Model {self.model} is currently loading. This can take several minutes for large models.",
+                                'model': self.model
+                            }
+                    except:
+                        pass
+
+                return {
+                    'success': False,
+                    'error': f"Failed to load model {self.model}: {error_text}",
+                    'model': self.model
+                }
+
+        except Exception as e:
+            self.logger.error(f"Error preloading model {self.model}: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'model': self.model
+            }
 
 
 class AIProviderManager:

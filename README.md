@@ -119,9 +119,15 @@ Access the web interface at http://YOUR_SERVER:8084:
    - Host/IP address (e.g., 192.168.10.160:11434)
    - Model selection from available models
    - Enable/disable local AI
+   - Model preloading for faster responses
 3. Configure Gemini (external AI) settings:
    - CLI path and enable/disable options
 4. AI providers automatically fallback from local to external
+5. **Enhanced Provider Status**: View real-time information including:
+   - Loaded models with memory usage (VRAM)
+   - Model specifications (parameters, quantization, context length)
+   - Available models and total storage usage
+   - Current model status and expiration times
 
 ### Sentiment Analysis
 1. Go to the Sentiment page
@@ -158,7 +164,7 @@ Access the web interface at http://YOUR_SERVER:8084:
 - **Database** (`models/database.py`): UUID-based SQLite operations with sentiment caching
 - **Messaging Service** (`services/messaging.py`): Message polling and reaction sending
 - **Setup Service** (`services/setup.py`): Device linking and configuration
-- **AI Provider** (`services/ai_provider.py`): Unified interface for local (Ollama) and external (Gemini) AI
+- **AI Provider** (`services/ai_provider.py`): Unified interface for local (Ollama) and external (Gemini) AI with intelligent model loading and enhanced status reporting
 - **Sentiment Service** (`services/sentiment.py`): Privacy-aware sentiment analysis with AI provider abstraction
 - **Summarization Service** (`services/summarization.py`): Privacy-aware message summarization with AI provider abstraction
 - **Web Server** (`web/server.py`): Full-featured management interface with AI configuration and markdown rendering
@@ -215,6 +221,12 @@ The bot uses a UUID-centric design:
 ### Group memberships not showing
 - Run sync: `python3 signal_bot.py --sync-only`
 - Or restart bot with sync: `python3 signal_bot.py --sync-groups`
+
+### AI model loading issues
+- **"llm server loading model" errors**: Bot automatically retries with intelligent loading detection
+- **Model not loading**: Use "Preload Model" button in AI Config page for large models
+- **Slow responses**: Check AI Config page for model status and VRAM usage
+- **Model memory issues**: View loaded models and memory usage in Provider Status section
 
 ### Too many debug messages in logs
 - By default, bot runs with INFO level logging
