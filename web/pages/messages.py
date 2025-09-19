@@ -7,6 +7,7 @@ from typing import Dict, Any
 from urllib.parse import quote
 from ..shared.base_page import BasePage
 from ..shared.filters import GlobalFilterSystem
+from ..shared.filter_utils import get_date_range_from_filters
 from models.user_display_utils import get_user_display_sql
 
 
@@ -324,45 +325,20 @@ class MessagesPage(BasePage):
         groups_html = ""
         groups_with_messages = []
 
+        # Get date range from filters using centralized logic
+        start_date, end_date = get_date_range_from_filters(filters)
+
         for group in monitored_groups:
             try:
-                # Get message count for this group with ALL current filters applied
-                # Using hours filter when no specific date is set
-                if date_param:
-                    # Use specific date
-                    message_count = self.db.get_message_count_filtered(
-                        group_id=group.group_id,
-                        sender_uuid=sender_filter,
-                        attachments_only=attachments_only,
-                        start_date=date_param,
-                        end_date=date_param,
-                        user_timezone=user_timezone
-                    )
-                else:
-                    # Use hours filter for recent messages
-                    if hours_filter and hours_filter > 0:
-                        from datetime import datetime, timedelta
-                        end_time = datetime.now()
-                        start_time = end_time - timedelta(hours=hours_filter)
-                        # Convert to date strings for the database method
-                        message_count = self.db.get_message_count_filtered(
-                            group_id=group.group_id,
-                            sender_uuid=sender_filter,
-                            attachments_only=attachments_only,
-                            start_date=start_time.strftime('%Y-%m-%d'),
-                            end_date=end_time.strftime('%Y-%m-%d'),
-                            user_timezone=user_timezone
-                        )
-                    else:
-                        # No time filter - show all messages
-                        message_count = self.db.get_message_count_filtered(
-                            group_id=group.group_id,
-                            sender_uuid=sender_filter,
-                            attachments_only=attachments_only,
-                            start_date=None,
-                            end_date=None,
-                            user_timezone=user_timezone
-                        )
+                # Get message count using the EXISTING database method with proper date handling
+                message_count = self.db.get_message_count_filtered(
+                    group_id=group.group_id,
+                    sender_uuid=sender_filter,
+                    attachments_only=attachments_only,
+                    start_date=start_date,
+                    end_date=end_date,
+                    user_timezone=user_timezone
+                )
 
                 # Only show groups that have messages matching the current filters
                 if message_count > 0:
@@ -854,34 +830,23 @@ class MessagesPage(BasePage):
         per_page = 50
         offset = (page - 1) * per_page
 
-        # Get optional filters
-        group_filter = query.get('group_id', [None])[0]
-        sender_filter = query.get('sender_uuid', [None])[0]
-        attachments_only = query.get('attachments_only', [None])[0] == 'true'
-        start_date = query.get('start_date', [None])[0]
-        end_date = query.get('end_date', [None])[0]
+        # Parse filters using GlobalFilterSystem for consistency
+        filters = GlobalFilterSystem.parse_query_filters(query)
 
-        # Handle 'date' parameter (for unified interface) - convert to start_date/end_date
-        date_param = query.get('date', [None])[0]
-        if date_param and not start_date and not end_date:
-            start_date = date_param
-            end_date = date_param
-        elif date_param is None and not start_date and not end_date:
-            # Default to empty (All Messages) if no date is specified
-            date_param = ''
-            start_date = None
-            end_date = None
-        elif date_param == "":
-            # Empty string means show all messages (no date filtering)
-            start_date = None
-            end_date = None
+        # Extract individual filter values
+        group_filter = filters.get('group_id')
+        sender_filter = filters.get('sender_id')  # Note: using sender_id now
+        attachments_only = filters.get('attachments_only', False)
+
+        # Get date range from filters using centralized logic
+        start_date, end_date = get_date_range_from_filters(filters)
 
         # Get messages using database filtering
         user_timezone = self.get_user_timezone(query)
         try:
             messages = self.db.get_messages_by_group_with_names_filtered(
                 group_id=group_filter,
-                sender_uuid=sender_filter,
+                sender_uuid=sender_filter,  # Database still uses sender_uuid
                 attachments_only=attachments_only,
                 start_date=start_date,
                 end_date=end_date,
@@ -891,7 +856,7 @@ class MessagesPage(BasePage):
             )
             total_messages = self.db.get_message_count_filtered(
                 group_id=group_filter,
-                sender_uuid=sender_filter,
+                sender_uuid=sender_filter,  # Database still uses sender_uuid
                 attachments_only=attachments_only,
                 start_date=start_date,
                 end_date=end_date,
