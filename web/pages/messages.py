@@ -34,7 +34,6 @@ class MessagesPage(BasePage):
 
         # Add page-specific JavaScript
         js_code += """
-                <script>
                 function showTab(tabName) {
                     const tabs = document.querySelectorAll('.tab-content');
                     tabs.forEach(tab => tab.classList.remove('active'));
@@ -200,8 +199,6 @@ class MessagesPage(BasePage):
                         setTimeout(loadActivityData, 500);
                     }
                 });
-
-                </script>
         """
         return js_code
 
@@ -518,11 +515,15 @@ class MessagesPage(BasePage):
 
     def _render_senders_tab(self, query: Dict[str, Any]) -> str:
         """Render the By Sender tab content."""
-        # Get filter parameters
-        date_param = query.get('date', [query.get('start_date', [None])[0]])[0]
-        group_filter = query.get('group_id', [None])[0]
-        attachments_only = query.get('attachments_only', [None])[0] == 'true'
-        sender_filter = query.get('sender_uuid', [None])[0]
+        # Parse filter parameters using GlobalFilterSystem
+        filters = GlobalFilterSystem.parse_query_filters(query)
+
+        # Get individual filter values
+        date_param = filters.get('date')
+        group_filter = filters.get('group_id')
+        attachments_only = filters.get('attachments_only', False)
+        sender_filter = filters.get('sender_id')
+        date_mode = filters.get('date_mode', 'all')
 
         # Handle date based on mode
         if date_mode == 'today':

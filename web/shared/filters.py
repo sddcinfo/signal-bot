@@ -175,7 +175,6 @@ class GlobalFilterSystem:
         This should be included once per page.
         """
         return """
-        <script>
         // Global Filters JavaScript Module
         const GlobalFilters = {
             // Get all current filter values
@@ -357,7 +356,6 @@ class GlobalFilterSystem:
                 console.log('Fallback initialization of date mode display');
             }
         }, 500);
-        </script>
         """
 
     @staticmethod
