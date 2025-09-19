@@ -28,9 +28,10 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 
 from models.database import DatabaseManager
+from utils.bot_instance import BotInstanceManager
 from services.setup import SetupService
 from services.messaging import MessagingService
-from web.server import WebServer
+from web.server import ModularWebServer
 
 
 class SignalBot:
@@ -44,7 +45,6 @@ class SignalBot:
             debug: Enable debug-level logging
         """
         self.shutdown_event = threading.Event()
-        self.lock_file_path = Path(__file__).parent / "signal_bot.lock"
         self.log_file_path = Path(__file__).parent / "signal_bot.log"
         self.sync_groups_on_start = sync_groups_on_start
         self.debug = debug
@@ -53,11 +53,11 @@ class SignalBot:
         self._setup_logging()
         self.logger = logging.getLogger(__name__)
 
-        # Create lock file for bot
-        self._create_lock_file()
-
         # Initialize components
         self.db = DatabaseManager(logger=self.logger)
+
+        # Initialize bot instance manager (ensures only one bot runs)
+        self.instance_manager = BotInstanceManager(self.db, logger=self.logger)
         self.setup = SetupService(self.db, logger=self.logger)
         self.messaging = None  # Will be initialized after bot is configured
         self.web_server = None  # Will be initialized in start_web_interface
@@ -93,27 +93,15 @@ class SignalBot:
         logging.getLogger('urllib3').setLevel(logging.WARNING)
         logging.getLogger('requests').setLevel(logging.WARNING)
 
-    def _create_lock_file(self):
-        """Create singleton lock file for bot."""
-        try:
-            if self.lock_file_path.exists():
-                # Check if process is still running
-                with open(self.lock_file_path, 'r') as f:
-                    old_pid = int(f.read().strip())
+    def acquire_instance_lock(self, force: bool = False) -> bool:
+        """Acquire exclusive bot instance lock."""
+        success, message = self.instance_manager.acquire_instance_lock(force=force)
+        if not success:
+            self.logger.error(message)
+            return False
 
-                try:
-                    os.kill(old_pid, 0)
-                    raise RuntimeError(f"Another instance of Signal Bot is running (PID: {old_pid})")
-                except (OSError, ProcessLookupError):
-                    # Stale lock file, remove it
-                    self.lock_file_path.unlink()
-
-            # Create new lock file
-            with open(self.lock_file_path, 'w') as f:
-                f.write(str(os.getpid()))
-
-        except Exception as e:
-            raise RuntimeError(f"Failed to create lock file: {e}")
+        self.logger.info(message)
+        return True
 
 
     def _setup_signal_handlers(self):
@@ -130,20 +118,19 @@ class SignalBot:
 
     def _setup_cleanup_handlers(self):
         """Setup cleanup handlers for exit."""
-        def cleanup_files():
-            """Clean up lock file on exit."""
+        def cleanup_instance():
+            """Clean up bot instance on exit."""
             try:
-                if self.lock_file_path.exists():
-                    self.lock_file_path.unlink()
+                self.instance_manager.release_instance_lock("Process terminated")
             except Exception:
                 pass
 
-        atexit.register(cleanup_files)
+        atexit.register(cleanup_instance)
 
     def start_web_interface(self) -> Optional[str]:
         """Start the web management interface in a separate thread."""
         try:
-            self.web_server = WebServer(self.db, self.setup, port=8084, logger=self.logger)
+            self.web_server = ModularWebServer(self.db, self.setup, port=8084)
 
             def web_server_thread():
                 """Run web server in separate thread."""
@@ -247,11 +234,16 @@ class SignalBot:
         finally:
             self.logger.info("Polling worker thread stopped")
 
-    def run(self):
+    def run(self, force: bool = False):
         """Run the bot with non-blocking, threaded architecture."""
         self.logger.info("Starting UUID-based Signal Bot")
 
+        # Acquire instance lock to ensure only one bot runs
+        if not self.acquire_instance_lock(force=force):
+            return
+
         try:
+            self.instance_manager.update_status("starting", "Initializing services")
             # Start web interface
             url = self.start_web_interface()
             if url:
@@ -291,14 +283,25 @@ class SignalBot:
             )
             self.polling_thread.start()
 
+            self.instance_manager.update_status("running", "Bot fully operational")
             self.logger.info("Bot ready - use the web interface for configuration")
             self.logger.info("Press Ctrl+C to stop")
 
-            # Main thread just waits for shutdown
+            # Main thread waits for shutdown and sends heartbeats
             try:
+                heartbeat_counter = 0
                 while not self.shutdown_event.is_set():
                     if self.shutdown_event.wait(10.0):  # Check every 10 seconds
                         break
+
+                    # Send heartbeat every 30 seconds (every 3rd check)
+                    heartbeat_counter += 1
+                    if heartbeat_counter >= 3:
+                        self.instance_manager.heartbeat()
+                        # Also cleanup old status records once per hour
+                        if heartbeat_counter % 360 == 0:  # 360 * 10 seconds = 1 hour
+                            self.instance_manager.cleanup_old_status()
+                        heartbeat_counter = 0
 
                     # Periodically log status (every 5 minutes)
                     # This also keeps the main thread responsive
@@ -381,14 +384,14 @@ def main():
         help='Only sync group memberships and exit (do not start bot)'
     )
     parser.add_argument(
-        '--web-only',
-        action='store_true',
-        help='Start only the web interface without message polling'
-    )
-    parser.add_argument(
         '--debug',
         action='store_true',
         help='Enable debug logging for troubleshooting'
+    )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force start even if another instance is running'
     )
 
     args = parser.parse_args()
@@ -422,7 +425,7 @@ def main():
     # Normal bot operation
     try:
         bot = SignalBot(sync_groups_on_start=args.sync_groups, debug=args.debug)
-        bot.run()
+        bot.run(force=args.force)
     except KeyboardInterrupt:
         print("\nInterrupted by user")
         sys.exit(0)

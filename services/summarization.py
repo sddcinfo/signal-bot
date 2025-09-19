@@ -86,7 +86,7 @@ class MessageSummarizer:
 
             # Get message text and sender
             text = msg.get('message_text', '')
-            sender = msg.get('display_name') or msg.get('friendly_name') or msg.get('sender_uuid', 'Unknown')
+            sender = msg.get('friendly_name') or msg.get('sender_uuid', 'Unknown')
 
             # Skip empty messages
             if not text or text.strip() == '':

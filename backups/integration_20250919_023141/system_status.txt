@@ -1,0 +1,35 @@
+=== Signal Bot Status Check ===
+Date: Fri Sep 19 02:31:42 AM UTC 2025
+
+=== Running Processes ===
+PID 1178218: python3 signal_service.py --force 
+PID 1178267: python3 web_server.py --host=0.0.0.0 
+
+=== Ports in Use (8080-8089) ===
+Port 8084: python3 (PID 1178267)
+
+=== Signal CLI Status ===
+Signal CLI: Available at /usr/local/bin/signal-cli
+Signal CLI (custom): Available at /usr/local/bin/signal-cli
+
+=== Database Status ===
+Database: signal_bot.db (5.0M)
+
+=== Log Files ===
+signal_service.log: 284K (2323 lines)
+signal_bot.log: 664K (5954 lines)
+web_server.log: 192K (1386 lines)
+
+=== Module Structure ===
+✓ Config module present
+✓ Utils module present
+✓ Services module present
+✓ Models module present
+✓ Web module present
+✓ Documentation present
+
+=== Quick Commands ===
+  Production web server:  ./run_web_server.sh
+  Testing web server:     ./run_web_server.sh --testing
+  Signal service:         ./run_signal_service.sh
+  Stop all processes:     pkill -f 'signal_service.py|web_server.py'

@@ -1,66 +1,240 @@
 # Signal Bot
 
-A UUID-based Signal bot that automatically sends emoji reactions to messages from configured users in monitored groups, with privacy-aware AI integration for sentiment analysis and message summarization.
+A powerful, modular Python bot for Signal messenger with AI integration, automated responses, and comprehensive group management capabilities.
 
 ## Features
 
-- **Automatic Emoji Reactions**: Bot reacts to messages from specific users with configured emojis
-- **UUID-based Architecture**: Uses Signal UUIDs as primary identifiers for reliability
-- **Web Management Interface**: Full-featured web UI for configuration and monitoring
-- **Privacy-Aware AI Integration**: Supports both local (Ollama) and external (Gemini) AI providers
-- **Sentiment Analysis**: AI-powered emotion and mood analysis with privacy protection
-- **Message Summarization**: Intelligent summaries of recent conversations with privacy controls
-- **Virtual Environment Support**: Automated venv setup with dependency management
-- **Attachment Support**: Downloads and stores message attachments with thumbnails in web view
-- **Group Membership Sync**: Automatically syncs group memberships from Signal
-- **Message History**: View and filter messages from monitored groups with member-level filtering
-- **Activity Visualization**: Hourly bar charts showing message patterns throughout the day
-- **Smart Message Handling**: Properly identifies and handles text, attachments, stickers, and reactions
-- **Thread-safe Operations**: SQLite with proper locking for concurrent access
-- **Clean Setup Flow**: Device linking → group sync → user discovery → configuration
-- **Timezone Support**: All timestamps properly converted to user's local timezone
-- **Configurable Logging**: Debug flag for verbose output when troubleshooting
+- 🤖 **AI-Powered Responses** - Integration with multiple AI providers (Ollama, OpenAI, Anthropic, Google Gemini)
+- 📊 **Message Analytics** - Sentiment analysis and message summarization
+- 👥 **Group Management** - Monitor and manage Signal groups with granular controls
+- 🌐 **Web Dashboard** - Beautiful web interface for configuration and monitoring
+- 📝 **Command System** - Extensible command framework for bot interactions
+- 🔄 **Auto-Sync** - Automatic synchronization of users and groups
+- 📈 **Real-time Statistics** - Track message flow, user activity, and system health
+- 🎨 **Customizable** - User-specific emoji configurations and preferences
+- 🔐 **UUID-based Architecture** - Reliable user identification using Signal UUIDs
+- 🧩 **Modular Design** - Clean separation of concerns with reusable components
+- 📎 **Attachment Support** - Handle images, files, and media attachments
+- ⏰ **Timezone Support** - Proper timestamp handling across timezones
+- 🔒 **Thread-Safe** - SQLite with proper locking for concurrent access
+- 📊 **Activity Visualization** - Charts and graphs for message patterns
+- 🚀 **Performance Optimized** - Caching, indexing, and batch operations
+
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Management Scripts](#management-scripts)
+- [Development](#development)
+- [Documentation](#documentation)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Architecture
+
+Signal Bot uses a modular architecture designed for scalability and maintainability:
+
+```
+signal-bot/
+├── config/          # Centralized configuration
+│   ├── settings.py  # Application settings
+│   └── constants.py # Application constants
+├── utils/           # Shared utilities
+│   ├── common.py    # Helper functions
+│   ├── logging.py   # Logging setup
+│   ├── validators.py # Input validation
+│   └── decorators.py # Reusable decorators
+├── services/        # Business logic
+│   ├── base.py      # Base service class
+│   ├── messaging.py # Message handling
+│   ├── setup.py     # Bot setup
+│   └── ai_provider.py # AI integrations
+├── models/          # Data layer
+│   └── database.py  # Database management
+├── web/            # Web interface
+│   ├── server.py   # Web server
+│   ├── pages/      # Page modules
+│   └── shared/     # Shared components
+└── docs/           # Documentation
+```
+
+For detailed architecture information, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Installation
+
+### Prerequisites
+
+- Python 3.8+ (3.10+ recommended)
+- signal-cli installed and configured
+- SQLite3
+- Virtual environment (recommended)
+
+### Step 1: Install signal-cli
+
+```bash
+# Run the automated installer
+./install_signal_cli.sh
+
+# Or install manually
+wget https://github.com/AsamK/signal-cli/releases/download/v0.13.4/signal-cli-0.13.4.tar.gz
+tar xf signal-cli-0.13.4.tar.gz -C /opt/
+ln -sf /opt/signal-cli-0.13.4/bin/signal-cli /usr/local/bin/
+```
+
+### Step 2: Set Up Python Environment
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/signal-bot.git
+cd signal-bot
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Step 3: Configure Signal Account
+
+```bash
+# Register a new Signal account (if needed)
+signal-cli -u +YOUR_PHONE_NUMBER register
+
+# Verify with SMS code
+signal-cli -u +YOUR_PHONE_NUMBER verify SMS_CODE
+
+# Or link to existing account via web dashboard
+# Navigate to http://localhost:8084/setup after starting the bot
+```
 
 ## Quick Start
 
-1. **Install signal-cli** (required):
-   ```bash
-   ./install_signal_cli.sh
-   ```
-
-2. **Run the bot**:
-   ```bash
-   ./run_bot.sh
-   ```
-   Or manually:
-   ```bash
-   python3 signal_bot.py
-   ```
-
-3. **Access web interface**:
-   Open http://YOUR_SERVER:8084 in your browser
-
-**Note**: The bot automatically sets up a virtual environment and installs AI dependencies when using `./run_bot.sh`.
-
-## Command-Line Options
+### Using the Management Script
 
 ```bash
-./run_bot.sh [options]
+# Start all services
+./manage.sh start
+
+# Check status
+./manage.sh status
+
+# View configuration
+./manage.sh config
+
+# Access web dashboard
+open http://localhost:8084
+```
+
+### Manual Start
+
+```bash
+# Start Signal service
+./run_signal_service.sh
+
+# In another terminal, start web server
+./run_web_server.sh
+
+# Or restart everything
+./restart.sh
+```
+
+## Configuration
+
+### Environment Variables
+
+Create a `.env` file to override default settings:
+
+```env
+# Core Settings
+SIGNAL_CLI_PATH=/usr/local/bin/signal-cli
+DATABASE_PATH=signal_bot.db
+LOG_LEVEL=INFO
+
+# Web Server
+WEB_HOST=0.0.0.0
+WEB_PORT=8084
+WEB_DEBUG=False
+
+# AI Providers
+OLLAMA_HOST=http://localhost:11434/
+OLLAMA_DEFAULT_MODEL=llama3.2:latest
+
+# Optional AI Providers
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-...
+GOOGLE_API_KEY=...
+
+# Feature Flags
+ENABLE_SENTIMENT_ANALYSIS=True
+ENABLE_SUMMARIZATION=True
+ENABLE_AUTO_RESPONSE=True
+ENABLE_GROUP_MONITORING=True
+```
+
+### Configuration Files
+
+All configuration is centralized in `config/settings.py`. You can:
+
+1. Set environment variables (recommended for deployment)
+2. Edit `config/settings.py` directly (for development)
+3. Use the web dashboard for runtime configuration
+
+For detailed configuration options, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+
+## Usage
+
+### Web Dashboard
+
+Access the dashboard at `http://localhost:8084`:
+
+- **Dashboard**: Overview of bot status and activity
+- **Users**: Manage users and emoji configurations
+- **Groups**: Monitor and manage Signal groups
+- **Messages**: View message history and analytics
+- **Settings**: Configure bot behavior
+- **Setup**: Initial bot setup and Signal account linking
+- **AI Config**: Configure AI providers and models
+
+### Signal Commands
+
+Send commands to the bot via Signal:
+
+- `/help` - Show available commands
+- `/status` - Bot status
+- `/stats [group]` - Group statistics
+- `/summary [hours]` - Message summary
+- `/sentiment [hours]` - Sentiment analysis
+- `/monitor <group>` - Start monitoring a group
+- `/unmonitor <group>` - Stop monitoring a group
+
+### Management Scripts
+
+```bash
+# Main management script
+./manage.sh {start|stop|restart|status|config|cleanup|logs|test|help}
+
+# Individual scripts
+./check_status.sh       # Detailed status check
+./check_config.sh       # Configuration validation
+./cleanup_backups.sh    # Clean old files (use --dry-run first)
+./restart.sh           # Quick restart all services
+```
 # or
 python3 signal_bot.py [options]
 
 Options:
   --sync-groups    Sync group memberships from Signal on startup
   --sync-only      Only sync group memberships and exit (useful for cron)
-  --web-only       Start only the web interface without message polling
   --debug          Enable debug logging for troubleshooting
+  --force          Force start even if another instance is running
   --help           Show help message
-
-run_bot.sh specific options:
-  --force          Automatically stop existing bot processes without prompting
 ```
-
-**Note**: `./run_bot.sh` passes signal_bot.py arguments through, plus handles its own `--force` option for process management.
 
 ## Setup Flow
 
@@ -72,16 +246,22 @@ run_bot.sh specific options:
 
 ## Web Interface Pages
 
-Access the web interface at http://YOUR_SERVER:8084:
+Access the web interface at http://YOUR_SERVER:8084 (or YOUR_SERVER:8085 for testing):
 
 - **Overview** (`/`): Dashboard with bot status and statistics
 - **Groups** (`/groups`): View all groups, enable/disable monitoring, see member counts
 - **Users** (`/users`): Configure emoji reactions for users, manage discovered users
-- **All Messages** (`/all-messages`): View message history with group and member filtering
+- **Messages** (`/messages`): Enhanced message history with smart filtering:
+  - **Smart Group Filter**: Shows only monitored groups (not all groups)
+  - **Dynamic Member Filter**: When group selected, shows only members of that group
+  - **Single Date Filter**: Simplified date selection with compact layout
+  - **Tabbed Interface**: All Messages, Attachments, Mentions, Reactions
+  - **Enhanced Formatting**: Compact, one-line filter layout with minimal whitespace
 - **Sentiment** (`/sentiment`): Privacy-aware AI sentiment analysis of group conversations
 - **Summary** (`/summary`): Privacy-aware AI summaries of recent group conversations
-- **Activity** (`/activity`): Visualize hourly message patterns with interactive bar charts
+- **Activity** (`/activity`): Visualize hourly message patterns with vertical bar charts
 - **AI Config** (`/ai-config`): Configure local (Ollama) and external (Gemini) AI providers
+- **Bot Status** (`/bot-status`): Real-time monitoring of bot services and system status
 
 ## How It Works
 
@@ -105,13 +285,32 @@ Access the web interface at http://YOUR_SERVER:8084:
 4. Choose reaction mode (random, sequential, AI)
 5. Save the configuration
 
-### Message Filtering
-- In All Messages page, filter by specific groups
-- When a group is selected, filter further by individual members
-- Use "Show only attachments" checkbox to view messages with attachments
-- View detailed message history with sender information
-- Attachments are displayed inline with thumbnails for images
+### Enhanced Message Filtering
+The Messages page features a completely redesigned filtering system:
+
+**Smart Group Filtering:**
+- Shows only monitored groups in the dropdown (not all groups)
+- Reduces clutter by focusing on relevant groups only
+
+**Dynamic Member Filtering:**
+- When a group is selected, member dropdown shows only that group's members
+- Automatically updates based on group selection for precise targeting
+
+**Simplified Date Selection:**
+- Single date field instead of confusing start/end date ranges
+- Compact, one-line layout with minimal whitespace
+- All filters displayed cleanly on a single row
+
+**Tabbed Message Views:**
+- All Messages: Complete message history
+- Attachments: Messages with files, images, or stickers
+- Mentions: Messages containing @mentions
+- Reactions: Messages with emoji reactions
+
+**Enhanced Display:**
+- Attachments displayed inline with thumbnails for images
 - Full pagination support with maintained filter states
+- Clean, compact formatting for better usability
 
 ### AI Configuration
 1. Go to the AI Config page
@@ -160,16 +359,37 @@ Access the web interface at http://YOUR_SERVER:8084:
 
 ## Architecture
 
-- **Main Bot** (`signal_bot.py`): Main orchestrator with threading and message polling
+### Separated Services Architecture (Recommended)
+
+**Signal CLI Service** (`signal_service.py`):
+- Standalone Signal CLI polling and message processing
+- Runs independently and continuously
+- Handles message storage, reactions, and attachment downloads
+- Can remain running while web server is restarted
+
+**Web Server** (`web_server.py`):
+- Standalone web interface for configuration and monitoring
+- Can be restarted independently for updates and testing
+- Automatic port conflict resolution (kills existing processes)
+- Network accessible (binds to 0.0.0.0) for remote access
+
+**Shared Components:**
 - **Database** (`models/database.py`): UUID-based SQLite operations with sentiment caching
-- **Messaging Service** (`services/messaging.py`): Message polling and reaction sending
+- **Messaging Service** (`services/messaging.py`): Message polling and reaction sending with cleaner debug logging
 - **Setup Service** (`services/setup.py`): Device linking and configuration
-- **AI Provider** (`services/ai_provider.py`): Unified interface for local (Ollama) and external (Gemini) AI with intelligent model loading and enhanced status reporting
+- **AI Provider** (`services/ai_provider.py`): Unified interface for local (Ollama) and external (Gemini) AI
 - **Sentiment Service** (`services/sentiment.py`): Privacy-aware sentiment analysis with AI provider abstraction
-- **Summarization Service** (`services/summarization.py`): Privacy-aware message summarization with AI provider abstraction
-- **Web Server** (`web/server.py`): Full-featured management interface with AI configuration and markdown rendering
+- **Summarization Service** (`services/summarization.py`): Privacy-aware message summarization
+- **Modular Web Interface** (`web/`): Separated pages with shared templates and enhanced filtering
+
+**Utilities:**
+- **Status Checker** (`check_status.sh`): Monitor running services, ports, and system status
 - **QR Generator** (`utils/qrcode_generator.py`): ASCII QR code generation
-- **Virtual Environment** (`run_bot.sh`): Automated venv setup and dependency management
+- **Port Management**: Simplified system using only 8084 (production) and 8085 (testing)
+
+### Legacy All-in-One Architecture
+
+**Main Bot** (`signal_bot.py`): Combined orchestrator with threading, message polling, and web server
 
 ## Database Schema
 
@@ -202,16 +422,42 @@ The bot uses a UUID-centric design:
 
 ## Troubleshooting
 
+### Service Status and Monitoring
+
+**Check what's running:**
+```bash
+./check_status.sh
+```
+This shows running processes, ports in use, Signal CLI status, database info, and log file sizes.
+
+**Service-specific issues:**
+- **Signal CLI Service**: Check `signal_service.log` for polling errors
+- **Web Server**: Check web server output for binding or startup issues
+- **Port conflicts**: Use `./check_status.sh` to see what's using which ports
+
 ### Bot not receiving messages
 - Ensure signal-cli is properly linked: Check Setup page
 - Verify groups are monitored: Check Groups page
-- Check logs: `tail -f signal_bot.log`
-- Enable debug logging: `python3 signal_bot.py --debug`
+- Check Signal CLI service is running: `./check_status.sh`
+- Check logs: `tail -f signal_service.log` (for separated services) or `tail -f signal_bot.log` (for all-in-one)
+- Enable debug logging: `./run_signal_service.sh --debug`
 
 ### Reactions not being sent
 - Verify user has reactions configured: Check Users page
 - Ensure user is sending messages in monitored groups
 - Check that reactions are enabled for the user
+- Verify Signal CLI service is processing messages
+
+### Web interface not accessible
+- Check web server is running: `./check_status.sh`
+- Verify correct port (8084 for production, 8085 for testing)
+- Ensure web server binds to 0.0.0.0 for network access
+- Try restarting: `./run_web_server.sh` (automatically kills conflicting processes)
+
+### Enhanced Message Filtering issues
+- If groups don't appear: Ensure they are monitored (Groups page)
+- If members don't update: Select a group first, then member filter will populate
+- If filters reset: This is expected behavior for simplified single-date filtering
 
 ### Attachments not displaying
 - Check that attachment was properly downloaded from signal-cli
@@ -219,8 +465,8 @@ The bot uses a UUID-centric design:
 - Ensure web server can serve the attachment endpoint
 
 ### Group memberships not showing
-- Run sync: `python3 signal_bot.py --sync-only`
-- Or restart bot with sync: `python3 signal_bot.py --sync-groups`
+- Use separated services: `./run_signal_service.sh --sync-groups`
+- Or legacy all-in-one: `python3 signal_bot.py --sync-only`
 
 ### AI model loading issues
 - **"llm server loading model" errors**: Bot automatically retries with intelligent loading detection
@@ -228,9 +474,55 @@ The bot uses a UUID-centric design:
 - **Slow responses**: Check AI Config page for model status and VRAM usage
 - **Model memory issues**: View loaded models and memory usage in Provider Status section
 
-### Too many debug messages in logs
-- By default, bot runs with INFO level logging
-- Add `--debug` flag only when troubleshooting issues
+### Debug logging
+- Debug messages now only appear when explicitly enabled with `--debug`
+- Cleaner logs by default with `INFO` level logging
+- Use debug mode only when troubleshooting specific issues
+
+### Port management issues
+- Only two ports are used: 8084 (production) and 8085 (testing)
+- Automatic conflict resolution kills existing processes on the target port
+- Check current port usage: `./check_status.sh`
+
+## Development
+
+### Project Structure
+
+The Signal Bot uses a modular architecture for maintainability and scalability. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed information.
+
+### Key Components
+
+- **Configuration** (`config/`): Centralized settings and constants
+- **Utilities** (`utils/`): Shared helper functions and decorators
+- **Services** (`services/`): Business logic with BaseService pattern
+- **Models** (`models/`): Database abstraction layer
+- **Web** (`web/`): Modular web interface with shared components
+
+### Development Guidelines
+
+- Follow the coding standards in [docs/STYLE_GUIDE.md](docs/STYLE_GUIDE.md)
+- See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for contribution guidelines
+- Use the management scripts for testing and validation:
+  - `./manage.sh test` - Test module loading
+  - `./manage.sh config` - Validate configuration
+  - `./check_status.sh` - Check service status
+
+### Testing
+
+```bash
+# Test module loading and configuration
+./manage.sh test
+
+# Run with debug logging
+./run_signal_service.sh --debug
+
+# Test web server on alternate port
+./run_web_server.sh --testing
+```
+
+## Contributing
+
+We welcome contributions! Please see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
 
 ## License
 

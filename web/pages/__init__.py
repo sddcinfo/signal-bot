@@ -1,0 +1,1 @@
+# Individual page modules for Signal Bot web interface

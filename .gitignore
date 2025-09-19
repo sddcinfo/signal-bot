@@ -39,3 +39,5 @@ ENV/
 # Temporary files
 temp/
 tmp/
+# Obsolete code archive
+oldcode/

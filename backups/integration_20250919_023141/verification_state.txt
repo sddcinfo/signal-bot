@@ -1,0 +1,61 @@
+================================================================================
+SIGNAL BOT FUNCTIONALITY VERIFICATION
+================================================================================
+Timestamp: 2025-09-19T02:31:42.192541
+
+Web Server Status:
+  Running: ✗
+
+API Endpoints:
+  /api/status: ✗
+  /api/users: ✗
+  /api/groups: ✗
+  /api/messages: ✗
+
+Web Pages:
+  /: ✓
+  /setup: ✓
+  /users: ✓
+  /groups: ✓
+  /messages: ✓
+  /controls: ✗
+  /sentiment: ✗
+  /summary: ✗
+  /activity: ✗
+  /stats: ✗
+  /bot-status: ✗
+  /ai-config: ✓
+
+Database:
+  Accessible: ✓
+  Tables: 12
+  Users: 119
+  Groups: 35
+  Messages: 716
+
+Signal Service:
+  Process Running: ✓
+  PID: 1178218
+  Log Updating: ✗
+
+Python Modules:
+  models.database: ✓ importable
+  services.setup: ✓ importable
+  services.messaging: ✓ importable
+  services.ai_provider: ✓ importable
+  web.server: ✓ importable
+
+File Hashes (for change detection):
+  signal_service.py: b2be62b7
+  web_server.py: 161e494f
+  models/database.py: c1d216d9
+  services/setup.py: f3348624
+  services/messaging.py: caa42c00
+
+Snapshot saved to: snapshot_20250919_023142.json
+
+Comparing with previous snapshot: snapshot_20250919_021611.json
+
+================================================================================
+❌ SYSTEM STATUS: Some critical components are not running
+   Run './manage.sh status' for more details

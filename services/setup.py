@@ -10,6 +10,7 @@ Handles the complete setup flow:
 Follows the new UUID-based architecture.
 """
 import re
+from utils.common import safe_strip
 import json
 import time
 import logging
@@ -268,9 +269,99 @@ class SetupService:
             self.logger.error(f"Error discovering groups: {e}")
             return []
 
+    def sync_users_to_database(self) -> int:
+        """
+        Sync users/contacts from Signal CLI to database with proper friendly names.
+
+        Returns:
+            Number of users synced
+        """
+        try:
+            self.logger.info("Getting contacts from Signal CLI...")
+
+            # Get bot phone number for signal-cli command
+            bot_phone = self.db.get_config("bot_phone_number")
+            if not bot_phone:
+                self.logger.error("Bot phone number not configured")
+                return 0
+
+            # Run signal-cli listContacts with detailed info
+            cmd = [
+                self.signal_cli_path,
+                "--output=json",
+                "-u", bot_phone,
+                "listContacts",
+                "--detailed"
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+            if result.returncode != 0:
+                self.logger.error(f"signal-cli listContacts failed: {result.stderr}")
+                return 0
+
+            contacts = []
+            if result.stdout.strip():
+                try:
+                    import json
+                    contacts = json.loads(result.stdout)
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"Error parsing JSON: {e}")
+                    return 0
+
+            if not contacts:
+                self.logger.info("No contacts found")
+                return 0
+
+            self.logger.info(f"Found {len(contacts)} contacts from Signal CLI")
+
+            synced_count = 0
+            for contact in contacts:
+                uuid = contact.get('uuid')
+                phone = contact.get('number')
+
+                # Skip contacts without UUID - these are likely inactive Signal users
+                if not uuid:
+                    self.logger.debug(f"Skipping contact without UUID: {phone or 'unknown'}")
+                    continue
+
+                # Determine friendly name using all available sources
+                friendly_name = ""
+                if contact.get('name'):
+                    friendly_name = contact['name']
+                elif contact.get('givenName') and contact.get('familyName'):
+                    friendly_name = f"{contact['givenName']} {contact['familyName']}"
+                elif contact.get('givenName'):
+                    friendly_name = contact['givenName']
+                elif contact.get('profile', {}).get('givenName'):
+                    friendly_name = contact['profile']['givenName']
+                    if contact.get('profile', {}).get('familyName'):
+                        friendly_name += f" {contact['profile']['familyName']}"
+
+                try:
+                    self.db.upsert_user(
+                        uuid=uuid,
+                        phone_number=phone,
+                        friendly_name=friendly_name
+                    )
+                    synced_count += 1
+                    self.logger.debug(f"Synced user: {friendly_name or phone or uuid}")
+                except Exception as e:
+                    self.logger.error(f"Error syncing contact {friendly_name or phone or uuid}: {e}")
+
+            self.logger.info(f"Synced {synced_count} users to database")
+            return synced_count
+
+        except subprocess.TimeoutExpired:
+            self.logger.error("signal-cli listContacts timed out")
+            return 0
+        except Exception as e:
+            self.logger.error(f"Error syncing users: {e}")
+            return 0
+
     def sync_groups_to_database(self, groups: Optional[List[SignalGroup]] = None) -> int:
         """
-        Sync discovered groups to database.
+        Sync discovered groups to database with detailed member information.
 
         Args:
             groups: Optional list of groups, will discover if not provided
@@ -278,21 +369,94 @@ class SetupService:
         Returns:
             Number of groups synced
         """
+        # If groups not provided, get them from Signal CLI
         if groups is None:
-            groups = self.discover_groups()
+            try:
+                self.logger.info("Getting groups from Signal CLI with detailed info...")
+
+                # Get bot phone number for signal-cli command
+                bot_phone = self.db.get_config("bot_phone_number")
+                if not bot_phone:
+                    self.logger.error("Bot phone number not configured")
+                    groups = []
+                else:
+                    # Use JSON output for better parsing
+                    cmd = [
+                        self.signal_cli_path,
+                        "--output=json",
+                        "-u", bot_phone,
+                        "listGroups",
+                        "--detailed"
+                    ]
+
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+                    if result.returncode != 0:
+                        self.logger.error(f"signal-cli listGroups failed: {result.stderr}")
+                        groups = []
+                    else:
+                        json_groups = []
+                        if result.stdout.strip():
+                            try:
+                                import json
+                                json_groups = json.loads(result.stdout)
+                            except json.JSONDecodeError as e:
+                                self.logger.error(f"Error parsing JSON: {e}")
+
+                        # Convert JSON groups to SignalGroup objects
+                        groups = []
+                        for jg in json_groups:
+                            # Extract member UUIDs
+                            member_uuids = []
+                            for member in jg.get('members', []):
+                                if member.get('uuid'):
+                                    member_uuids.append(member['uuid'])
+
+                            groups.append(SignalGroup(
+                                group_id=jg.get('id', ''),
+                                name=jg.get('name'),
+                                members=member_uuids,
+                                is_blocked=jg.get('isBlocked', False)
+                            ))
+            except Exception as e:
+                self.logger.error(f"Error getting groups from Signal CLI: {e}")
+                groups = []
+
+        # Note: We don't filter empty/test groups here to avoid sync issues
+        # Filtering is done at display time in the Groups page
 
         synced_count = 0
+
+        # Pre-fetch all users to avoid individual profile lookups
+        self.logger.info("Pre-loading existing users from database...")
+        existing_users = {}
+        try:
+            # Get all users from database
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT uuid, friendly_name, phone_number FROM users")
+                for row in cursor.fetchall():
+                    existing_users[row['uuid']] = {
+                        'friendly_name': row['friendly_name'],
+                        'phone_number': row['phone_number']
+                    }
+            self.logger.info(f"Loaded {len(existing_users)} existing users")
+        except Exception as e:
+            self.logger.warning(f"Could not pre-load users: {e}")
 
         for signal_group in groups:
             try:
                 self.logger.debug(f"Starting sync for group: {signal_group.group_id}")
 
-                # Create/update group in database
+                # Create/update group in database, preserving monitoring status
                 self.logger.debug(f"Upserting group: {signal_group.group_id}")
+                existing_group = self.db.get_group(signal_group.group_id)
+                is_monitored = existing_group.is_monitored if existing_group else False
                 group = self.db.upsert_group(
                     group_id=signal_group.group_id,
                     group_name=signal_group.name,
-                    member_count=len(signal_group.members)
+                    member_count=len(signal_group.members),
+                    is_monitored=is_monitored
                 )
                 self.logger.debug(f"Group upsert completed: {signal_group.group_id}")
 
@@ -316,11 +480,22 @@ class SetupService:
                         phone_number = member_id
                         self.logger.debug(f"Phone {member_id} -> UUID {user_uuid}")
 
+                    # Use existing user data if available, otherwise create minimal entry
+                    # We don't fetch individual profiles during group sync for performance
+                    existing_user = existing_users.get(user_uuid)
+                    if existing_user:
+                        # User exists, use their existing friendly name
+                        profile_name = existing_user.get('friendly_name')
+                    else:
+                        # New user, will get profile on next user sync
+                        profile_name = None
+
                     # Create/update user
                     self.logger.debug(f"Upserting user: {user_uuid}")
                     user = self.db.upsert_user(
                         uuid=user_uuid,
-                        phone_number=phone_number
+                        phone_number=phone_number,
+                        friendly_name=profile_name
                     )
                     self.logger.debug(f"User upsert completed: {user_uuid}")
 
@@ -341,6 +516,43 @@ class SetupService:
         self.logger.info(f"Synced {synced_count} groups to database")
         return synced_count
 
+    def clean_import(self) -> Dict[str, Any]:
+        """
+        Perform a clean import of all contacts and groups from Signal CLI.
+        This replaces the separate import_contacts.py script functionality.
+
+        Returns:
+            Dictionary with import results
+        """
+        try:
+            self.logger.info("Starting clean import of contacts and groups...")
+
+            # Step 1: Import all users/contacts with friendly names
+            self.logger.info("Importing contacts...")
+            contacts_imported = self.sync_users_to_database()
+
+            # Step 2: Import all groups with members
+            self.logger.info("Importing groups...")
+            groups_synced = self.sync_groups_to_database()
+
+            result = {
+                'success': True,
+                'contacts_imported': contacts_imported,
+                'groups_synced': groups_synced
+            }
+
+            self.logger.info(f"Clean import complete: {contacts_imported} contacts, {groups_synced} groups")
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error during clean import: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'contacts_imported': 0,
+                'groups_synced': 0
+            }
+
     def get_setup_status(self) -> Dict[str, Any]:
         """
         Get current setup status.
@@ -350,17 +562,6 @@ class SetupService:
         """
         bot_phone = self.db.get_config("bot_phone_number")
         bot_uuid = self.db.get_config("bot_uuid")
-
-        # Auto-detect bot UUID if missing but phone is configured
-        if bot_phone and not bot_uuid and self._check_signal_cli():
-            try:
-                detected_uuid = self._detect_bot_uuid(bot_phone)
-                if detected_uuid:
-                    self.db.set_config("bot_uuid", detected_uuid)
-                    bot_uuid = detected_uuid
-                    self.logger.info(f"Auto-detected bot UUID: {detected_uuid}")
-            except Exception as e:
-                self.logger.warning(f"Failed to auto-detect bot UUID: {e}")
 
         stats = self.db.get_stats()
 
@@ -373,6 +574,8 @@ class SetupService:
             'bot_configured': bool(bot_phone and bot_uuid),
             'bot_phone_number': bot_phone,
             'bot_uuid': bot_uuid,
+            'device_registered': bool(bot_phone and bot_uuid),  # Device is registered if bot is configured
+            'groups_synced': stats['total_groups'] > 0,  # Groups are synced if we have any groups
             'total_groups': stats['total_groups'],
             'monitored_groups': stats['monitored_groups'],
             'total_users': stats['total_users'],
@@ -788,7 +991,7 @@ class SetupService:
         """Check if signal-cli is available and working."""
         try:
             cmd = [self.signal_cli_path, "--version"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
             return result.returncode == 0
         except Exception:
             return False
@@ -859,20 +1062,20 @@ class SetupService:
                 if not uuid:
                     continue
 
-                # Build friendly name from available data
-                friendly_name = self._build_friendly_name(contact)
+                # Extract all contact fields
+                contact_fields = self._extract_contact_fields(contact)
 
-                if friendly_name:
-                    # Update user in database
-                    success = self.db.upsert_user(
-                        uuid=uuid,
-                        phone_number=phone,
-                        friendly_name=friendly_name
-                    )
+                # Update user in database with all available fields
+                success = self.db.upsert_user(
+                    uuid=uuid,
+                    phone_number=phone,
+                    **contact_fields  # Unpack all extracted fields
+                )
 
-                    if success:
-                        updated_count += 1
-                        self.logger.debug(f"Updated profile for {uuid}: {friendly_name}")
+                if success:
+                    updated_count += 1
+                    display_name = contact_fields.get('friendly_name', 'Unknown')
+                    self.logger.debug(f"Updated profile for {uuid}: {display_name}")
 
             self.logger.info(f"Profile sync complete - updated {updated_count} user profiles")
             return True
@@ -881,33 +1084,68 @@ class SetupService:
             self.logger.error(f"Failed to sync user profiles: {e}")
             return False
 
+    def _extract_contact_fields(self, contact: dict) -> dict:
+        """
+        Extract all available contact fields from JSON contact data.
+
+        Returns dict with all fields for upsert_user method.
+        """
+        # Extract contact name (address book name)
+        contact_name = safe_strip(contact.get("name"))
+
+        # Extract direct name fields from root level
+        root_given_name = safe_strip(contact.get("givenName"))
+        root_family_name = safe_strip(contact.get("familyName"))
+
+        # Extract profile name components
+        profile = contact.get("profile") or {}
+        profile_given_name = safe_strip(profile.get("givenName"))
+        profile_family_name = safe_strip(profile.get("familyName"))
+
+        # Choose the best data from root vs profile (prefer whichever has actual data)
+        given_name = profile_given_name or root_given_name
+        family_name = profile_family_name or root_family_name
+
+        # Also check nickName fields as additional fallback
+        if not given_name:
+            nick_given = safe_strip(contact.get("nickGivenName"))
+            if nick_given:
+                given_name = nick_given
+
+        if not family_name:
+            nick_family = safe_strip(contact.get("nickFamilyName"))
+            if nick_family:
+                family_name = nick_family
+
+        # Extract username
+        username = safe_strip(contact.get("username"))
+
+        # Use the new improved friendly name calculation (excluding username)
+        friendly_name = self._calculate_best_friendly_name({
+            'name': contact_name,
+            'givenName': given_name,
+            'familyName': family_name
+        })
+
+        return {
+            'contact_name': contact_name,
+            'given_name': given_name,
+            'family_name': family_name,
+            'profile_given_name': profile_given_name,
+            'profile_family_name': profile_family_name,
+            'username': username,
+            'friendly_name': friendly_name
+        }
+
     def _build_friendly_name(self, contact: dict) -> str:
         """
-        Build a friendly display name from contact data.
-
-        Priority order:
-        1. Contact name (e.g., "Quentin Osborne")
-        2. Profile givenName + familyName (e.g., "Brad" + "Dell")
-        3. Profile givenName only (e.g., "FijiBoy")
-        4. Phone number as fallback
+        Build a friendly display name from contact data (for backward compatibility).
         """
-        # Try contact name first (usually most descriptive)
-        contact_name = contact.get("name") or ""
-        contact_name = contact_name.strip() if contact_name else ""
-        if contact_name:
-            return contact_name
+        fields = self._extract_contact_fields(contact)
+        friendly_name = fields.get('friendly_name')
 
-        # Try profile name components
-        profile = contact.get("profile") or {}
-        given_name = profile.get("givenName") or ""
-        given_name = given_name.strip() if given_name else ""
-        family_name = profile.get("familyName") or ""
-        family_name = family_name.strip() if family_name else ""
-
-        if given_name and family_name:
-            return f"{given_name} {family_name}"
-        elif given_name:
-            return given_name
+        if friendly_name:
+            return friendly_name
 
         # Fallback to phone number if available
         phone = contact.get("number") or ""
@@ -918,7 +1156,7 @@ class SetupService:
         # Final fallback to UUID prefix
         uuid = contact.get("uuid") or ""
         if uuid:
-            return f"User {uuid[:8]}"
+            return f"User {uuid}"
 
         return "Unknown User"
 
@@ -946,3 +1184,481 @@ class SetupService:
 
         # Format as UUID: 8-4-4-4-12
         return f"{phone_hash[:8]}-{phone_hash[8:12]}-{phone_hash[12:16]}-{phone_hash[16:20]}-{phone_hash[20:32]}"
+
+    def _fetch_user_profile(self, user_uuid: str) -> Optional[str]:
+        """
+        Fetch user profile name from Signal-CLI.
+
+        Args:
+            user_uuid: The UUID of the user to fetch profile for
+
+        Returns:
+            Profile name if found, None otherwise
+        """
+        try:
+            self.logger.debug(f"Fetching profile for user: {user_uuid}")
+
+            # Get bot phone from database
+            bot_phone = self.db.get_config("bot_phone_number")
+            if not bot_phone:
+                self.logger.error("Bot phone number not configured")
+                return None
+
+            # Use signal-cli to get user info
+            cmd = [
+                self.signal_cli_path,
+                "-u", bot_phone,
+                "getUserStatus",
+                user_uuid
+            ]
+
+            self.logger.debug(f"Running command: {' '.join(cmd)}")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10  # Short timeout for profile fetches
+            )
+
+            if result.returncode != 0:
+                self.logger.debug(f"Failed to fetch profile for {user_uuid}: {result.stderr}")
+                return None
+
+            # Parse the output to extract profile name
+            output = result.stdout.strip()
+            if not output:
+                return None
+
+            # Try to parse JSON output if it's structured
+            try:
+                import json
+                data = json.loads(output)
+                if isinstance(data, dict):
+                    # Look for profile name in common fields
+                    profile_name = (
+                        data.get('profileName') or
+                        data.get('displayName') or
+                        data.get('name') or
+                        data.get('givenName')
+                    )
+                    if profile_name and profile_name.strip():
+                        self.logger.debug(f"Found profile name for {user_uuid}: {profile_name}")
+                        return profile_name.strip()
+            except (json.JSONDecodeError, TypeError):
+                # Not JSON, try to extract from plain text
+                pass
+
+            # Try alternative command to get contact info using JSON
+            cmd_contact = [
+                self.signal_cli_path,
+                "--output=json",
+                "-u", bot_phone,
+                "listContacts"
+            ]
+
+            self.logger.debug(f"Trying contact list: {' '.join(cmd_contact)}")
+            result_contact = subprocess.run(
+                cmd_contact,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result_contact.returncode == 0 and result_contact.stdout.strip():
+                # Parse the JSON output from listContacts
+                try:
+                    import json
+                    contacts = json.loads(result_contact.stdout.strip())
+
+                    for contact in contacts:
+                        if contact.get('uuid') == user_uuid:
+                            # Priority: contact name > profile name
+                            contact_name_raw = contact.get('name', '')
+                            contact_name = contact_name_raw.strip() if contact_name_raw else ''
+
+                            profile = contact.get('profile', {})
+                            profile_given_raw = profile.get('givenName', '')
+                            profile_given = profile_given_raw.strip() if profile_given_raw else ''
+
+                            profile_family_raw = profile.get('familyName', '')
+                            profile_family = profile_family_raw.strip() if profile_family_raw else ''
+
+                            # Build profile name from given + family if available
+                            profile_name = ''
+                            if profile_given and profile_family:
+                                profile_name = f"{profile_given} {profile_family}".strip()
+                            elif profile_given:
+                                profile_name = profile_given
+                            elif profile_family:
+                                profile_name = profile_family
+
+                            # Return the best available name (prioritize contact name over profile name)
+                            if contact_name:
+                                self.logger.debug(f"Found contact name for {user_uuid}: {contact_name}")
+                                return contact_name
+                            elif profile_name:
+                                self.logger.debug(f"Found profile name for {user_uuid}: {profile_name}")
+                                return profile_name
+
+                except json.JSONDecodeError as e:
+                    self.logger.warning(f"Failed to parse JSON from listContacts: {e}")
+                except Exception as e:
+                    self.logger.warning(f"Error processing contact JSON: {e}")
+
+            self.logger.debug(f"No profile name found for user: {user_uuid}")
+            return None
+
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"Timeout fetching profile for user: {user_uuid}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Error fetching profile for user {user_uuid}: {str(e)}")
+            return None
+
+    def clean_import_contacts_and_groups(self, bot_phone: str) -> Dict[str, Any]:
+        """
+        Clean import of contacts and groups - clears database and reimports from signal-cli.
+
+        This uses listContacts without -a flag to avoid duplicates.
+
+        Returns:
+            Dict with import results including counts and any errors
+        """
+        try:
+            self.logger.info("Starting clean import of contacts and groups...")
+
+            # Preserve existing configurations before clearing
+            self.logger.info("Preserving existing configurations...")
+
+            # Get monitored groups
+            monitored_groups = {}
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT group_id, is_monitored FROM groups WHERE is_monitored = 1")
+                for row in cursor.fetchall():
+                    monitored_groups[row[0]] = True
+
+                # Get user reactions (using same connection)
+                user_reactions = {}
+                cursor.execute("SELECT uuid, emojis, reaction_mode, is_active FROM user_reactions")
+                for row in cursor.fetchall():
+                    user_reactions[row[0]] = {
+                        'emojis': json.loads(row[1]) if row[1] else [],
+                        'reaction_mode': row[2],
+                        'is_active': bool(row[3])
+                    }
+
+            # Clear data but preserve configurations
+            self.logger.info("Clearing existing users and group memberships...")
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM users")
+                cursor.execute("DELETE FROM group_members")
+                # Don't delete groups table - preserve monitored status
+                # Don't delete user_reactions - will restore after user import
+                conn.commit()
+
+            # Import clean contacts (without -a flag to avoid duplicates)
+            self.logger.info("Getting clean contact list from Signal CLI...")
+            cmd = [
+                self.signal_cli_path,
+                "--output=json",
+                "-u", bot_phone,
+                "listContacts",
+                "--detailed"
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            if result.returncode != 0:
+                self.logger.error(f"Failed to list contacts: {result.stderr}")
+                return {"success": False, "error": "Failed to list contacts"}
+
+            if not result.stdout.strip():
+                self.logger.warning("No contacts data received")
+                return {"success": False, "error": "No contacts data received"}
+
+            contacts = json.loads(result.stdout)
+            self.logger.info(f"Found {len(contacts)} contacts")
+
+            # Import contacts
+            imported_count = 0
+            for contact in contacts:
+                uuid = contact.get('uuid')
+                phone = contact.get('number')
+
+                # Skip contacts without UUID or phone number
+                if not uuid and not phone:
+                    continue
+
+                # Calculate the best friendly name using improved logic
+                friendly_name = self._calculate_best_friendly_name(contact)
+
+                # Generate UUID if missing (for phone-only contacts)
+                if not uuid:
+                    import uuid as uuid_module
+                    uuid = str(uuid_module.uuid4())
+
+                try:
+                    self.db.upsert_user(
+                        uuid=uuid,
+                        phone_number=phone,
+                        friendly_name=friendly_name
+                    )
+                    imported_count += 1
+                    self.logger.debug(f"Imported: {friendly_name or phone or uuid}")
+                except Exception as e:
+                    self.logger.error(f"Error importing contact {friendly_name or phone or uuid}: {e}")
+
+            self.logger.info(f"Imported {imported_count} contacts successfully")
+
+            # Now sync groups
+            self.logger.info("Syncing groups...")
+            group_cmd = [
+                self.signal_cli_path,
+                "--output=json",
+                "-u", bot_phone,
+                "listGroups",
+                "--detailed"
+            ]
+
+            group_result = subprocess.run(group_cmd, capture_output=True, text=True, timeout=60)
+
+            if group_result.returncode != 0:
+                self.logger.error(f"Failed to list groups: {group_result.stderr}")
+                return {
+                    "success": True,
+                    "contacts_imported": imported_count,
+                    "groups_synced": 0,
+                    "warning": "Groups sync failed"
+                }
+
+            groups_synced = 0
+            if group_result.stdout.strip():
+                groups = json.loads(group_result.stdout)
+                self.logger.info(f"Found {len(groups)} groups")
+
+                for group in groups:
+                    group_id = group.get('id')
+                    group_name = group.get('name', 'Unnamed Group')
+                    members = group.get('members', [])
+
+                    if not group_id:
+                        continue
+
+                    try:
+                        # Update group info - preserve monitored status
+                        self.db.upsert_group(
+                            group_id=group_id,
+                            group_name=group_name,
+                            member_count=len(members)
+                        )
+
+                        # Restore monitored status if it was preserved
+                        if group_id in monitored_groups:
+                            self.db.set_group_monitoring(group_id, True)
+
+                        # Sync members
+                        member_uuids = []
+                        for member in members:
+                            member_uuid = member.get('uuid')
+                            if member_uuid:
+                                member_uuids.append(member_uuid)
+
+                        if member_uuids:
+                            self.db.sync_group_members(group_id, member_uuids)
+
+                        groups_synced += 1
+                        self.logger.debug(f"Synced group: {group_name} ({len(member_uuids)} members)")
+
+                    except Exception as e:
+                        self.logger.error(f"Error syncing group {group_name}: {e}")
+
+            # Restore user reactions for users that were preserved
+            self.logger.info("Restoring user reaction configurations...")
+            reactions_restored = 0
+            for user_uuid, reaction_config in user_reactions.items():
+                # Check if this user was reimported
+                user = self.db.get_user(user_uuid)
+                if user:
+                    try:
+                        self.db.set_user_reactions(
+                            user_uuid,
+                            reaction_config['emojis'],
+                            reaction_config['reaction_mode']
+                        )
+                        if not reaction_config['is_active']:
+                            # If it was inactive, deactivate it again
+                            with self.db._get_connection() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute(
+                                    "UPDATE user_reactions SET is_active = 0 WHERE uuid = ?",
+                                    (user_uuid,)
+                                )
+                                conn.commit()
+                        reactions_restored += 1
+                    except Exception as e:
+                        self.logger.error(f"Error restoring reactions for {user_uuid}: {e}")
+
+            self.logger.info(f"Clean import complete: {imported_count} contacts, {groups_synced} groups, {reactions_restored} reaction configs restored")
+
+            return {
+                "success": True,
+                "contacts_imported": imported_count,
+                "groups_synced": groups_synced,
+                "reactions_restored": reactions_restored,
+                "message": f"Successfully imported {imported_count} contacts and {groups_synced} groups. Restored {reactions_restored} user reaction configurations."
+            }
+
+        except Exception as e:
+            self.logger.error(f"Clean import failed: {e}")
+            return {
+                "success": False,
+                "error": f"Clean import failed: {str(e)}"
+            }
+
+    def recalculate_friendly_names(self) -> Dict[str, Any]:
+        """
+        Recalculate friendly names for all users based on current Signal CLI contact data.
+        This uses improved logic to prefer the best available name.
+        """
+        try:
+            self.logger.info("Starting friendly name recalculation for all users...")
+
+            # Get current contacts from Signal CLI
+            # First get the bot phone number
+            devices = self.detect_linked_devices()
+            if not devices:
+                return {
+                    "success": False,
+                    "error": "No linked Signal devices found"
+                }
+
+            bot_phone = devices[0].phone_number
+
+            # Get contacts using Signal CLI
+            self.logger.info("Getting contacts from Signal CLI...")
+            cmd = [
+                self.signal_cli_path,
+                "--output=json",
+                "-u", bot_phone,
+                "listContacts",
+                "--detailed"
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "error": f"Signal CLI command failed: {result.stderr}"
+                }
+
+            try:
+                contacts = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                return {
+                    "success": False,
+                    "error": "Failed to parse Signal CLI JSON output"
+                }
+
+            if not contacts:
+                return {
+                    "success": False,
+                    "error": "No contacts found from Signal CLI"
+                }
+
+            # Build a mapping of UUID/phone to contact data
+            contact_map = {}
+            for contact in contacts:
+                uuid = contact.get('uuid')
+                phone = contact.get('number')
+
+                if uuid:
+                    contact_map[uuid] = contact
+                if phone:
+                    contact_map[phone] = contact
+
+            # Update friendly names for all users in database
+            updated_count = 0
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Get all users
+                cursor.execute("SELECT uuid, phone_number, friendly_name FROM users")
+                users = cursor.fetchall()
+
+                for user in users:
+                    user_uuid = user[0]
+                    user_phone = user[1]
+                    current_friendly_name = user[2]
+
+                    # Find matching contact data
+                    contact_data = None
+                    if user_uuid in contact_map:
+                        contact_data = contact_map[user_uuid]
+                    elif user_phone in contact_map:
+                        contact_data = contact_map[user_phone]
+
+                    if contact_data:
+                        # Calculate the best friendly name using improved logic
+                        new_friendly_name = self._calculate_best_friendly_name(contact_data)
+
+                        # Only update if the name has changed and is not empty
+                        if new_friendly_name and new_friendly_name != current_friendly_name:
+                            cursor.execute(
+                                "UPDATE users SET friendly_name = ? WHERE uuid = ?",
+                                (new_friendly_name, user_uuid)
+                            )
+                            updated_count += 1
+                            self.logger.debug(f"Updated {user_uuid}: '{current_friendly_name}' -> '{new_friendly_name}'")
+
+                conn.commit()
+
+            self.logger.info(f"Friendly name recalculation complete: updated {updated_count} users")
+
+            return {
+                "success": True,
+                "updated_count": updated_count,
+                "message": f"Successfully updated {updated_count} user friendly names"
+            }
+
+        except Exception as e:
+            self.logger.error(f"Friendly name recalculation failed: {e}")
+            return {
+                "success": False,
+                "error": f"Friendly name recalculation failed: {str(e)}"
+            }
+
+    def _calculate_best_friendly_name(self, contact: dict) -> str:
+        """
+        Calculate the best friendly name from contact data using improved priority logic.
+        Priority:
+        1. Contact name (address book name)
+        2. Constructed name from given/family names (root or profile level)
+        3. Empty string (no username fallback)
+        """
+        # Extract all available name fields, handling None values
+        name_raw = contact.get('name')
+        name = name_raw.strip() if name_raw else ''
+
+        given_name_raw = contact.get('givenName')
+        given_name = given_name_raw.strip() if given_name_raw else ''
+
+        family_name_raw = contact.get('familyName')
+        family_name = family_name_raw.strip() if family_name_raw else ''
+
+        # Priority 1: Address book contact name (if not empty)
+        if name:
+            return name
+
+        # Priority 2: Construct name from given/family names
+        if given_name and family_name:
+            return f"{given_name} {family_name}"
+        elif given_name:
+            return given_name
+        elif family_name:
+            return family_name
+
+        # No fallback to username - return empty to use phone/UUID in centralized display logic
+        return ""

@@ -10,6 +10,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date, timezone, timedelta
 from .ai_provider import get_ai_response, get_ai_status
+from models.user_display_utils import get_user_display_sql
 
 
 class SentimentAnalyzer:
@@ -56,8 +57,8 @@ class SentimentAnalyzer:
                 start_timestamp = int(start_of_day.timestamp() * 1000)
                 end_timestamp = int(end_of_day.timestamp() * 1000)
 
-                query = """
-                SELECT COALESCE(u.display_name, u.friendly_name, m.sender_uuid), m.message_text, datetime(m.timestamp/1000, 'unixepoch') as msg_time,
+                query = f"""
+                SELECT {get_user_display_sql('u')}, m.message_text, datetime(m.timestamp/1000, 'unixepoch') as msg_time,
                        m.timestamp
                 FROM messages m
                 LEFT JOIN users u ON m.sender_uuid = u.uuid
@@ -70,8 +71,8 @@ class SentimentAnalyzer:
             except ImportError:
                 # Fallback to UTC if zoneinfo not available
                 self.logger.warning("zoneinfo not available, falling back to UTC")
-                query = """
-                SELECT COALESCE(u.display_name, u.friendly_name, m.sender_uuid), m.message_text, datetime(m.timestamp/1000, 'unixepoch') as msg_time,
+                query = f"""
+                SELECT {get_user_display_sql('u')}, m.message_text, datetime(m.timestamp/1000, 'unixepoch') as msg_time,
                        m.timestamp
                 FROM messages m
                 LEFT JOIN users u ON m.sender_uuid = u.uuid
@@ -82,8 +83,8 @@ class SentimentAnalyzer:
                 query_params = (group_id, target_date.strftime('%Y-%m-%d'))
         else:
             # No timezone provided, use UTC
-            query = """
-            SELECT COALESCE(u.display_name, u.friendly_name, m.sender_uuid), m.message_text, datetime(m.timestamp/1000, 'unixepoch') as msg_time,
+            query = f"""
+            SELECT {get_user_display_sql('u')}, m.message_text, datetime(m.timestamp/1000, 'unixepoch') as msg_time,
                    m.timestamp
             FROM messages m
             LEFT JOIN users u ON m.sender_uuid = u.uuid
