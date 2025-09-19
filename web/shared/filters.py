@@ -113,20 +113,20 @@ class GlobalFilterSystem:
                     </label>
                     <div style="display: flex; gap: 10px; align-items: center;">
                         <label style="display: flex; align-items: center; font-size: 0.9em; cursor: pointer;">
-                            <input type="radio" name="date-mode" id="global-date-mode-all" value="all"
-                                   onchange="document.getElementById('global-date').style.display='none'; document.getElementById('global-date').value=''; GlobalFilters.apply();" {date_all_checked}
+                            <input type="radio" name="date-mode" id="global-date-mode-all" value="all" {date_all_checked}
+                                   onchange="document.getElementById('global-date').style.display='none'; document.getElementById('global-date').value=''; GlobalFilters.apply();"
                                    style="margin-right: 3px;">
                             All Dates
                         </label>
                         <label style="display: flex; align-items: center; font-size: 0.9em; cursor: pointer;">
-                            <input type="radio" name="date-mode" id="global-date-mode-today" value="today"
-                                   onchange="document.getElementById('global-date').style.display='none'; GlobalFilters.apply();" {date_today_checked}
+                            <input type="radio" name="date-mode" id="global-date-mode-today" value="today" {date_today_checked}
+                                   onchange="document.getElementById('global-date').style.display='none'; GlobalFilters.apply();"
                                    style="margin-right: 3px;">
                             Today
                         </label>
                         <label style="display: flex; align-items: center; font-size: 0.9em; cursor: pointer;">
-                            <input type="radio" name="date-mode" id="global-date-mode-specific" value="specific"
-                                   onchange="document.getElementById('global-date').style.display='inline-block'; if(!document.getElementById('global-date').value) document.getElementById('global-date').value=new Date().toISOString().split('T')[0];" {date_specific_checked}
+                            <input type="radio" name="date-mode" id="global-date-mode-specific" value="specific" {date_specific_checked}
+                                   onchange="document.getElementById('global-date').style.display='inline-block'; if(!document.getElementById('global-date').value) document.getElementById('global-date').value=new Date().toISOString().split('T')[0]; GlobalFilters.apply();"
                                    style="margin-right: 3px;">
                             Pick Date
                         </label>
@@ -180,13 +180,14 @@ class GlobalFilterSystem:
         const GlobalFilters = {
             // Get all current filter values
             getValues: function() {
+                const dateRadio = document.querySelector('input[name="date-mode"]:checked');
                 return {
-                    groupId: document.getElementById('global-group-filter').value,
-                    senderId: document.getElementById('global-sender-filter').value,
-                    dateMode: document.querySelector('input[name="date-mode"]:checked').value,
-                    date: document.getElementById('global-date').value,
-                    hours: parseInt(document.getElementById('global-hours-filter').value),
-                    attachmentsOnly: document.getElementById('global-attachments-only').checked
+                    groupId: document.getElementById('global-group-filter') ? document.getElementById('global-group-filter').value : '',
+                    senderId: document.getElementById('global-sender-filter') ? document.getElementById('global-sender-filter').value : '',
+                    dateMode: dateRadio ? dateRadio.value : 'all',
+                    date: document.getElementById('global-date') ? document.getElementById('global-date').value : '',
+                    hours: document.getElementById('global-hours-filter') ? parseInt(document.getElementById('global-hours-filter').value) : 0,
+                    attachmentsOnly: document.getElementById('global-attachments-only') ? document.getElementById('global-attachments-only').checked : false
                 };
             },
 
@@ -217,7 +218,10 @@ class GlobalFilterSystem:
 
             // Apply filters (navigate with parameters)
             apply: function() {
+                console.log('GlobalFilters.apply() called');
                 const filters = this.getValues();
+                console.log('Current filters:', filters);
+
                 const currentUrl = new URL(window.location);
                 const params = currentUrl.searchParams;
 
@@ -260,6 +264,7 @@ class GlobalFilterSystem:
                 }
 
                 // Navigate to new URL
+                console.log('Navigating to:', currentUrl.toString());
                 window.location.href = currentUrl.toString();
             },
 
