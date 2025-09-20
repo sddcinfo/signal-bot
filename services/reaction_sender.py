@@ -10,9 +10,9 @@ import time
 import subprocess
 import threading
 import queue
-import logging
 from typing import Optional, Tuple
 from dataclasses import dataclass
+from utils.logging import get_logger
 
 
 @dataclass
@@ -32,7 +32,7 @@ class ReactionSender:
         """Initialize the reaction sender."""
         self.signal_cli_path = signal_cli_path
         self.bot_phone = bot_phone
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_logger(__name__)
         self.reaction_queue = queue.Queue()
         self.sender_thread = None
         self.shutdown_event = threading.Event()

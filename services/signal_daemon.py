@@ -12,10 +12,10 @@ import json
 import socket
 import subprocess
 import threading
-import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import signal as signal_module
+from utils.logging import get_logger
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -30,7 +30,7 @@ class SignalDaemonService:
     def __init__(self, db: DatabaseManager, logger: Optional[logging.Logger] = None):
         """Initialize the daemon service."""
         self.db = db
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_logger(__name__)
         self.signal_cli_path = "/usr/local/bin/signal-cli"
         self.socket_path = "/tmp/signal-cli.socket"
         self.daemon_process = None
@@ -306,11 +306,7 @@ class SignalDaemonService:
 
 def main():
     """Test the daemon service."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger(__name__)
+    logger = get_logger(__name__)
 
     # Initialize database
     db = DatabaseManager(logger=logger)

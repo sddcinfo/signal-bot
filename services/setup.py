@@ -13,7 +13,6 @@ import re
 from utils.common import safe_strip
 import json
 import time
-import logging
 import subprocess
 import sys
 import os
@@ -21,6 +20,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
 from models.database import DatabaseManager, User, Group
+from utils.logging import get_logger
 
 # Import QR code utilities from the existing utils
 try:
@@ -67,7 +67,7 @@ class SetupService:
             logger: Optional logger instance
         """
         self.db = db_manager
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_logger(__name__)
 
         # Auto-detect signal-cli path if not provided
         if signal_cli_path:

@@ -4,12 +4,12 @@ Daemon-native message processor
 
 Processes messages entirely through the daemon interface without mixing subprocess calls.
 """
-import logging
 import random
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 from models.database import DatabaseManager
+from utils.logging import get_logger
 
 
 class DaemonMessageProcessor:
@@ -25,7 +25,7 @@ class DaemonMessageProcessor:
         """
         self.db = db
         self.send_reaction = send_reaction_func
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_logger(__name__)
 
     def process_envelope(self, envelope: Dict[str, Any]) -> bool:
         """Process a message envelope from the daemon.

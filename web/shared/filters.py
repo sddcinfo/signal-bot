@@ -6,6 +6,7 @@ that work consistently across all pages.
 """
 
 from typing import List, Dict, Any, Optional
+from config.constants import DEFAULTS
 
 
 class GlobalFilterSystem:
@@ -384,7 +385,7 @@ class GlobalFilterSystem:
             date = date_type.today().isoformat()  # Always returns a string
 
         # Get hours filter, but set to 0 if specific date is selected
-        hours = int(query.get('hours', ['24'])[0]) if 'hours' in query else 24
+        hours = int(query.get('hours', [str(DEFAULTS['FILTER_HOURS'])])[0]) if 'hours' in query else DEFAULTS['FILTER_HOURS']
         if date_mode == 'specific':
             # When specific date is selected, ignore hours filter
             hours = 0

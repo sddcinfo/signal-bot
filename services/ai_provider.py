@@ -13,16 +13,18 @@ import subprocess
 import json
 import logging
 import requests
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from config.constants import TIMEOUTS, NETWORK
 
 
 class AIProvider(ABC):
     """Abstract base class for AI providers."""
 
     def __init__(self, logger: Optional[logging.Logger] = None):
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_logger(__name__)
 
     @abstractmethod
     def is_available(self) -> bool:
@@ -67,7 +69,7 @@ class GeminiProvider(AIProvider):
             result = subprocess.run(
                 [self.gemini_path, "--help"],
                 capture_output=True,
-                timeout=5
+                timeout=TIMEOUTS['WEB_REQUEST']
             )
             return result.returncode == 0
         except Exception:
@@ -134,7 +136,7 @@ class OllamaProvider(AIProvider):
     def __init__(self, host: str = None, model: str = None, logger: Optional[logging.Logger] = None):
         super().__init__(logger)
         # Use provided host or fallback to localhost
-        self.host = (host or "http://localhost:11434").rstrip('/')
+        self.host = (host or NETWORK['OLLAMA_DEFAULT_HOST']).rstrip('/')
         self.model = model or "llama3.2"
         self.api_url = f"{self.host}/api/generate"
         self.models_url = f"{self.host}/api/tags"
@@ -144,7 +146,7 @@ class OllamaProvider(AIProvider):
         """Check if Ollama service is available and model is installed."""
         try:
             # Check if Ollama service is running
-            response = requests.get(f"{self.host}/api/tags", timeout=5)
+            response = requests.get(f"{self.host}/api/tags", timeout=TIMEOUTS['WEB_REQUEST'])
             if response.status_code != 200:
                 return False
 
@@ -171,7 +173,7 @@ class OllamaProvider(AIProvider):
     def is_model_loaded(self) -> bool:
         """Check if the model is currently loaded in memory using /api/ps endpoint."""
         try:
-            response = requests.get(self.ps_url, timeout=5)
+            response = requests.get(self.ps_url, timeout=TIMEOUTS['WEB_REQUEST'])
             if response.status_code == 200:
                 data = response.json()
                 loaded_models = data.get('models', [])
@@ -201,7 +203,7 @@ class OllamaProvider(AIProvider):
     def generate_response(self, prompt: str, timeout: int = 180) -> Dict[str, Any]:
         """Generate response using Ollama API with intelligent model loading."""
         max_retries = 3
-        retry_delay = 15  # seconds - longer delay for model loading
+        retry_delay = TIMEOUTS['AI_RETRY_DELAY']  # Longer delay for model loading
 
         for attempt in range(max_retries):
             # Check if model is already loaded (fast check)
@@ -250,7 +252,6 @@ class OllamaProvider(AIProvider):
                         if "llm server loading model" in error_data.get('error', ''):
                             if attempt < max_retries - 1:
                                 self.logger.info(f"Model {self.model} is loading, waiting {retry_delay}s before retry {attempt + 2}/{max_retries}...")
-                                import time
                                 time.sleep(retry_delay)
                                 continue  # Retry with the same prompt
                             else:
@@ -310,7 +311,7 @@ class OllamaProvider(AIProvider):
 
         # Get available models
         try:
-            response = requests.get(self.models_url, timeout=5)
+            response = requests.get(self.models_url, timeout=TIMEOUTS['WEB_REQUEST'])
             if response.status_code == 200:
                 data = response.json()
                 available_models = data.get('models', [])
@@ -367,7 +368,7 @@ class OllamaProvider(AIProvider):
     def get_available_models(self) -> List[str]:
         """Get list of available models from Ollama."""
         try:
-            response = requests.get(self.models_url, timeout=5)
+            response = requests.get(self.models_url, timeout=TIMEOUTS['WEB_REQUEST'])
             if response.status_code == 200:
                 data = response.json()
                 return [model['name'] for model in data.get('models', [])]
@@ -377,7 +378,7 @@ class OllamaProvider(AIProvider):
     def get_loaded_models(self) -> List[Dict[str, Any]]:
         """Get list of currently loaded models with details."""
         try:
-            response = requests.get(self.ps_url, timeout=5)
+            response = requests.get(self.ps_url, timeout=TIMEOUTS['WEB_REQUEST'])
             if response.status_code == 200:
                 data = response.json()
                 return data.get('models', [])
@@ -457,7 +458,7 @@ class AIProviderManager:
     """Manages multiple AI providers with fallback support."""
 
     def __init__(self, db_manager=None, logger: Optional[logging.Logger] = None):
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_logger(__name__)
         self.db = db_manager
         self.providers: List[AIProvider] = []
         self._load_providers_from_config()

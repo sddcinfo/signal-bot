@@ -7,10 +7,10 @@ summarization and sentiment services.
 """
 
 import json
-import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from .ai_provider import get_ai_response, get_ai_status
+from utils.logging import get_logger
 
 
 class AIAnalysisService:
@@ -24,7 +24,7 @@ class AIAnalysisService:
             db_manager: Database manager instance
         """
         self.db = db_manager
-        self.logger = logging.getLogger(__name__)
+        self.logger = get_logger(__name__)
 
     def get_analysis_types(self, active_only: bool = True) -> List[Dict[str, Any]]:
         """

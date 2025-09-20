@@ -6,12 +6,13 @@ the UUID-first architecture with proper group monitoring.
 """
 import json
 import subprocess
-import logging
 import random
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
 from models.database import DatabaseManager
+from config.constants import TIMEOUTS
+from utils.logging import get_logger
 
 
 class MessagingService:
@@ -22,7 +23,7 @@ class MessagingService:
         """Initialize messaging service."""
         self.db = db
         self.signal_cli_path = signal_cli_path
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger or get_logger(__name__)
 
         # Get bot phone number from database
         self.bot_phone = self.db.get_config('bot_phone_number')
@@ -55,7 +56,7 @@ class MessagingService:
             else:
                 # No timeout - just get any queued messages immediately
                 self.logger.debug("Getting queued messages (no wait)")
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUTS['WEB_REQUEST'])
 
             if result.returncode != 0:
                 self.logger.warning("signal-cli receive failed with code %d", result.returncode)
@@ -407,7 +408,7 @@ class MessagingService:
             self.logger.debug("Sending reaction %s to message %s from %s",
                             emoji, target_timestamp, target_author[:8])
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUTS['SIGNAL_CLI'])
 
             if result.returncode == 0:
                 return True
@@ -698,7 +699,7 @@ class MessagingService:
             ]
 
             self.logger.info("Syncing group memberships from Signal...")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUTS['SIGNAL_CLI_DAEMON'])
 
             if result.returncode != 0:
                 self.logger.error("Failed to get group list: %s", result.stderr.strip() if result.stderr else "Unknown error")
