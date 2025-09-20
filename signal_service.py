@@ -14,11 +14,11 @@ Key features:
 """
 import os
 from config.settings import Config
+from config.constants import PATHS, TIMEOUTS, PROCESS
 import sys
 import time
 import signal as signal_module
 import threading
-import logging
 import atexit
 import argparse
 from pathlib import Path
@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from models.database import DatabaseManager
 from utils.bot_instance import BotInstanceManager
+from utils.logging import setup_logger, get_logger
 from services.setup import SetupService
 from services.messaging import MessagingService
 
@@ -44,13 +45,16 @@ class SignalPollingService:
             debug: Enable debug-level logging
         """
         self.shutdown_event = threading.Event()
-        self.log_file_path = Path(__file__).parent / "signal_service.log"
+        self.log_file_path = Path(__file__).parent / PATHS['SIGNAL_SERVICE_LOG']
         self.sync_groups_on_start = sync_groups_on_start
         self.debug = debug
 
-        # Setup logging with detailed formatting
-        self._setup_logging()
-        self.logger = logging.getLogger(__name__)
+        # Setup centralized logging
+        self.logger = setup_logger(
+            __name__,
+            log_file=str(self.log_file_path),
+            debug_override=debug
+        )
 
         # Initialize components
         self.db = DatabaseManager(logger=self.logger)
@@ -74,22 +78,6 @@ class SignalPollingService:
 
         self.logger.info("Signal polling service initialized (PID: %d)", os.getpid())
 
-    def _setup_logging(self):
-        """Setup logging for polling service."""
-        log_level = logging.DEBUG if self.debug else logging.INFO
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - [SIGNAL-SERVICE] - %(name)s - %(levelname)s - [%(threadName)s] - %(message)s',
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler(self.log_file_path, mode='a')
-            ],
-            force=True  # Override any existing logging config
-        )
-
-        # Set specific log levels for components
-        logging.getLogger('urllib3').setLevel(logging.WARNING)
-        logging.getLogger('requests').setLevel(logging.WARNING)
 
     def acquire_instance_lock(self, force: bool = False) -> bool:
         """Acquire exclusive bot instance lock."""

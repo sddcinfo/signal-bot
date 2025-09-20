@@ -14,8 +14,8 @@ Key features:
 """
 import os
 from config.settings import Config
+from config.constants import PATHS, NETWORK
 import sys
-import logging
 import argparse
 import signal
 import threading
@@ -26,6 +26,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 
 from models.database import DatabaseManager
+from utils.logging import setup_logger, get_logger
 from services.setup import SetupService
 from web.server import ModularWebServer
 
@@ -33,22 +34,25 @@ from web.server import ModularWebServer
 class StandaloneWebServer:
     """Standalone web server for Signal Bot management interface."""
 
-    def __init__(self, port: int = 8084, host: str = '0.0.0.0', debug: bool = False):
+    def __init__(self, port: int = None, host: str = None, debug: bool = False):
         """Initialize the standalone web server.
 
         Args:
-            port: Port to run the web server on
-            host: Host to bind to
+            port: Port to run the web server on (defaults to config)
+            host: Host to bind to (defaults to config)
             debug: Enable debug logging
         """
-        self.port = port
-        self.host = host
+        self.port = port or NETWORK['DEFAULT_WEB_PORT']
+        self.host = host or NETWORK['DEFAULT_WEB_HOST']
         self.debug = debug
         self.shutdown_event = threading.Event()
 
-        # Setup logging
-        self._setup_logging()
-        self.logger = logging.getLogger(__name__)
+        # Setup centralized logging
+        self.logger = setup_logger(
+            __name__,
+            log_file=str(Path(__file__).parent / PATHS['WEB_SERVER_LOG']),
+            debug_override=debug
+        )
 
         # Initialize database and services
         self.db = DatabaseManager(logger=self.logger)
@@ -77,22 +81,6 @@ class StandaloneWebServer:
 
         self.logger.info(f"Standalone web server initialized for {host}:{port}")
 
-    def _setup_logging(self):
-        """Setup logging for web server."""
-        log_level = logging.DEBUG if self.debug else logging.INFO
-        logging.basicConfig(
-            level=log_level,
-            format=f'%(asctime)s - [WEB-SERVER:{self.port}] - %(name)s - %(levelname)s - [%(threadName)s] - %(message)s',
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler('web_server.log', mode='a')
-            ],
-            force=True
-        )
-
-        # Set specific log levels for components
-        logging.getLogger('urllib3').setLevel(logging.WARNING)
-        logging.getLogger('requests').setLevel(logging.WARNING)
 
     def _setup_signal_handlers(self):
         """Setup signal handlers for graceful shutdown."""

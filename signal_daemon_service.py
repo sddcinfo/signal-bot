@@ -17,7 +17,6 @@ import sys
 import time
 import signal as signal_module
 import threading
-import logging
 import atexit
 import argparse
 from pathlib import Path
@@ -28,9 +27,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from models.database import DatabaseManager
 from utils.bot_instance import BotInstanceManager
+from utils.logging import setup_logger, get_logger
 from services.setup import SetupService
 from services.messaging_daemon import MessagingDaemonService
 from config.settings import Config
+from config.constants import PATHS, TIMEOUTS, PROCESS
 
 
 class SignalDaemonPollingService:
@@ -39,12 +40,15 @@ class SignalDaemonPollingService:
     def __init__(self, debug=False):
         """Initialize the Signal daemon service."""
         self.shutdown_event = threading.Event()
-        self.log_file_path = Path(__file__).parent / "signal_daemon.log"
+        self.log_file_path = Path(__file__).parent / PATHS['SIGNAL_DAEMON_LOG']
         self.debug = debug
 
-        # Setup logging
-        self._setup_logging()
-        self.logger = logging.getLogger(__name__)
+        # Setup centralized logging
+        self.logger = setup_logger(
+            __name__,
+            log_file=str(self.log_file_path),
+            debug_override=debug
+        )
 
         # Initialize components
         self.db = DatabaseManager(logger=self.logger)
@@ -70,22 +74,6 @@ class SignalDaemonPollingService:
 
         self.logger.info("Signal daemon service initialized (PID: %d)", os.getpid())
 
-    def _setup_logging(self):
-        """Setup logging for daemon service."""
-        log_level = logging.DEBUG if self.debug else logging.INFO
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - [DAEMON-SERVICE] - %(name)s - %(levelname)s - [%(threadName)s] - %(message)s',
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler(self.log_file_path, mode='a')
-            ],
-            force=True
-        )
-
-        # Set specific log levels
-        logging.getLogger('urllib3').setLevel(logging.WARNING)
-        logging.getLogger('requests').setLevel(logging.WARNING)
 
     def acquire_instance_lock(self, force: bool = False) -> bool:
         """Acquire exclusive bot instance lock."""

@@ -102,9 +102,16 @@ PATTERNS = {
 # All in seconds
 TIMEOUTS = {
     'SIGNAL_CLI': 30,
+    'SIGNAL_CLI_DAEMON': 60,
+    'SIGNAL_CLI_LONG': 120,
     'DATABASE': 30,
     'WEB_REQUEST': 10,
     'AI_REQUEST': 120,
+    'AI_RETRY_DELAY': 15,
+    'MESSAGE_PROCESS_WAIT': 10,
+    'POLL_INTERVAL': 5,
+    'DAEMON_RECONNECT': 5,
+    'PROCESS_KILL_WAIT': 5,
 }
 
 
@@ -125,4 +132,50 @@ DEFAULTS = {
     'BOT_NAME': 'Signal Bot',
     'UNKNOWN_USER': 'Unknown User',
     'UNKNOWN_GROUP': 'Unknown Group',
+    'LOCALHOST': 'localhost',
+    'FILTER_HOURS': 24,
+    'MAX_MESSAGES_PER_PAGE': 100,
+}
+
+
+# ============= Network Configuration =============
+NETWORK = {
+    'DEFAULT_WEB_PORT': 8084,
+    'DEFAULT_WEB_HOST': '0.0.0.0',
+    'OLLAMA_DEFAULT_HOST': 'http://localhost:11434',
+    'JSON_RPC_PORT': 7583,
+    'SOCKET_PATH': '/var/run/signal-cli/socket',
+}
+
+
+# ============= Logging Configuration =============
+LOGGING = {
+    'DEFAULT_LEVEL': 'INFO',
+    'DEBUG_LEVEL': 'DEBUG',
+    'FORMAT': '%(asctime)s - [%(name)s] - %(levelname)s - %(message)s',
+    'DATE_FORMAT': '%Y-%m-%d %H:%M:%S',
+    'MAX_LOG_SIZE': 10 * 1024 * 1024,  # 10MB
+    'LOG_BACKUP_COUNT': 5,
+}
+
+
+# ============= Process Management =============
+PROCESS = {
+    'PID_FILE': 'signal_bot.pid',
+    'LOCK_FILE': 'signal_bot.lock',
+    'INSTANCE_CHECK_INTERVAL': 5,
+    'MAX_RESTART_ATTEMPTS': 3,
+    'RESTART_DELAY': 5,
+}
+
+
+# ============= File Paths =============
+PATHS = {
+    'SIGNAL_SERVICE_LOG': 'signal_service.log',
+    'SIGNAL_DAEMON_LOG': 'signal_daemon.log',
+    'WEB_SERVER_LOG': 'web_server.log',
+    'DEBUG_LOG': 'signal_bot_debug.log',
+    'DATABASE': 'signal_bot.db',
+    'CONFIG_DIR': 'config',
+    'WEB_DIR': 'web',
 }
