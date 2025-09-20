@@ -645,7 +645,7 @@ class SettingsPage(BasePage):
                         </div>
                         <div class="user-details">
                             Phone: {status.get('bot_phone_number', 'Not configured')}<br>
-                            UUID: {status.get('bot_uuid', 'Not configured')[:8] + '...' if status.get('bot_uuid') else 'Not configured'}<br>
+                            UUID: {status.get('bot_uuid', 'Not configured')}<br>
                             {'Registered' if status['device_registered'] else 'Not registered'}
                         </div>
                     </div>

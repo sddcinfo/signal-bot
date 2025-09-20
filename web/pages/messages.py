@@ -880,7 +880,7 @@ class MessagesPage(BasePage):
                             attachments_html += f'<div class="attachment-file">📎 {file_name}</div>'
                     attachments_html += '</div>'
 
-                sender_display = msg.get('sender_display', f"User {msg.get('sender', 'Unknown')[:8]}...")
+                sender_display = msg.get('sender_display', f"User {msg.get('sender', 'Unknown')}")
                 group_display = msg.get('group_display', 'Unnamed Group')
 
                 messages_html += f"""
@@ -994,7 +994,7 @@ class MessagesPage(BasePage):
             elif mention.get('phone_number') and mention['phone_number'].strip():
                 user_name = mention['phone_number'].strip()
             elif mention.get('uuid'):
-                user_name = mention['uuid'][:8] + "..."
+                user_name = mention['uuid']
 
             # Replace the mention placeholder at the specific position
             if start + length <= len(message_text):

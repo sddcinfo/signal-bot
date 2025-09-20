@@ -221,8 +221,8 @@ class ComprehensiveDashboard(BasePage):
             document.getElementById('memory-usage').textContent = system.memory + ' MB';
             document.getElementById('db-size').textContent = system.db_size;
 
-            // Update progress bars
-            document.getElementById('cpu-bar').style.width = system.cpu + '%';
+            // Update progress bars (cap CPU at 100% for display)
+            document.getElementById('cpu-bar').style.width = Math.min(100, system.cpu) + '%';
             document.getElementById('memory-bar').style.width = system.memory_percent + '%';
         }
 
@@ -404,14 +404,14 @@ class ComprehensiveDashboard(BasePage):
                     <span class="metric-value" id="uptime">{data['system']['uptime']}</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">CPU Usage</span>
+                    <span class="metric-label">Bot CPU Usage</span>
                     <span class="metric-value" id="cpu-usage">{data['system']['cpu']}%</span>
                 </div>
                 <div class="progress-bar">
-                    <div class="progress-fill" id="cpu-bar" style="width: {data['system']['cpu']}%"></div>
+                    <div class="progress-fill" id="cpu-bar" style="width: {min(100, data['system']['cpu'])}%"></div>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Memory</span>
+                    <span class="metric-label">Bot Memory</span>
                     <span class="metric-value" id="memory-usage">{data['system']['memory']} MB</span>
                 </div>
                 <div class="progress-bar">
@@ -527,39 +527,155 @@ class ComprehensiveDashboard(BasePage):
 
         try:
             import subprocess
-            # Check for signal_service.py
-            result = subprocess.run(['pgrep', '-f', 'signal_service.py'], capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout.strip():
+            import platform
+
+            # Check for signal daemon service using ps directly (works on macOS)
+            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+            processes = result.stdout.lower()
+
+            # Check for signal daemon or service
+            if 'signal_daemon_service.py' in processes or 'signal_service.py' in processes:
                 signal_running = True
-            # Check for web_server.py
-            result = subprocess.run(['pgrep', '-f', 'web_server.py'], capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout.strip():
+
+            # Also check for signal-cli daemon process
+            if 'signal-cli' in processes and 'daemon' in processes:
+                signal_running = True
+
+            # Check for web_server.py - need to check for Python running web_server.py
+            if 'web_server.py' in processes:
                 web_running = True
         except:
             pass
 
-        # Get system metrics (placeholder without psutil)
+        # Get Bot-specific metrics (CPU and memory for our processes only)
         cpu_percent = 0
-        memory = type('Memory', (), {'percent': 0, 'total': 0, 'available': 0, 'used': 0})()
+        memory_mb = 0
+        memory_percent = 0
+
+        try:
+            import subprocess
+
+            # Get process information for Signal Bot processes only
+            bot_processes = []
+            total_cpu = 0.0
+            total_memory_kb = 0
+
+            # Use ps to get detailed info about our processes
+            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+            if result.returncode == 0:
+                for line in result.stdout.split('\n')[1:]:  # Skip header
+                    # Check if this is one of our bot processes
+                    if 'signal_daemon_service.py' in line or 'signal_service.py' in line or \
+                       ('web_server.py' in line and 'Python' in line) or \
+                       ('signal-cli' in line and 'daemon' in line):
+
+                        parts = line.split(None, 10)  # Split first 10 fields
+                        if len(parts) > 5:
+                            try:
+                                # CPU is column 2 (0-indexed)
+                                proc_cpu = float(parts[2])
+                                # RSS (resident set size) is column 5 (in KB on macOS)
+                                proc_mem_kb = int(parts[5])
+
+                                total_cpu += proc_cpu
+                                total_memory_kb += proc_mem_kb
+
+                                # Store process info for debugging
+                                bot_processes.append({
+                                    'pid': parts[1],
+                                    'cpu': proc_cpu,
+                                    'mem_mb': proc_mem_kb / 1024,
+                                    'cmd': parts[10] if len(parts) > 10 else 'N/A'
+                                })
+                            except (ValueError, IndexError):
+                                pass
+
+                # Set the calculated values
+                cpu_percent = round(total_cpu, 1)  # Can be > 100% on multi-core systems
+                memory_mb = int(total_memory_kb / 1024)  # Convert KB to MB
+
+                # Calculate memory percentage (bot memory / total system memory)
+                result = subprocess.run(['sysctl', '-n', 'hw.memsize'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    try:
+                        total_system_bytes = int(result.stdout.strip())
+                        total_system_mb = total_system_bytes / 1024 / 1024
+                        memory_percent = round((memory_mb / total_system_mb) * 100, 1)
+                    except:
+                        pass
+        except:
+            pass
 
         # Get database size
         db_path = Path(self.db.db_path)
         db_size = db_path.stat().st_size if db_path.exists() else 0
 
-        # Calculate uptime (from bot_status table if available)
+        # Calculate uptime from actual service start time
         uptime = "N/A"
         try:
-            with self.db._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT created_at FROM bot_status ORDER BY id DESC LIMIT 1")
-                result = cursor.fetchone()
-                if result:
-                    start_time = datetime.fromisoformat(result[0])
-                    uptime_delta = datetime.now() - start_time
-                    hours = int(uptime_delta.total_seconds() // 3600)
-                    minutes = int((uptime_delta.total_seconds() % 3600) // 60)
-                    uptime = f"{hours}h {minutes}m"
-        except:
+            import subprocess
+            import re
+            from datetime import datetime, timedelta
+
+            # Try to get process start time using ps with specific format
+            result = subprocess.run(['ps', '-eo', 'pid,etime,command'], capture_output=True, text=True)
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if 'signal_daemon_service.py' in line or 'signal_service.py' in line:
+                        # Extract elapsed time (format can be: MM:SS, HH:MM:SS, or DD-HH:MM:SS)
+                        parts = line.split(None, 2)  # Split into PID, ETIME, COMMAND
+                        if len(parts) >= 2:
+                            etime = parts[1]
+                            # Parse elapsed time
+                            if '-' in etime:
+                                # DD-HH:MM:SS format
+                                days_part, time_part = etime.split('-')
+                                days = int(days_part)
+                                time_parts = time_part.split(':')
+                                hours = int(time_parts[0]) if len(time_parts) > 0 else 0
+                                minutes = int(time_parts[1]) if len(time_parts) > 1 else 0
+                            elif etime.count(':') == 2:
+                                # HH:MM:SS format
+                                hours, minutes, _ = etime.split(':')
+                                days = 0
+                                hours = int(hours)
+                                minutes = int(minutes)
+                            elif etime.count(':') == 1:
+                                # MM:SS format
+                                minutes, _ = etime.split(':')
+                                days = 0
+                                hours = 0
+                                minutes = int(minutes)
+                            else:
+                                continue
+
+                            total_hours = days * 24 + hours
+                            if total_hours > 0:
+                                uptime = f"{total_hours}h {minutes}m"
+                            else:
+                                uptime = f"{minutes}m"
+                            break
+
+            # If still N/A, check web server process
+            if uptime == "N/A":
+                result = subprocess.run(['ps', '-eo', 'pid,etime,command'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if 'web_server.py' in line:
+                            parts = line.split(None, 2)
+                            if len(parts) >= 2:
+                                etime = parts[1]
+                                # Simple parsing for common format MM:SS
+                                if ':' in etime and '-' not in etime:
+                                    if etime.count(':') == 1:
+                                        minutes, _ = etime.split(':')
+                                        uptime = f"{minutes}m"
+                                    elif etime.count(':') == 2:
+                                        hours, minutes, _ = etime.split(':')
+                                        uptime = f"{int(hours)}h {int(minutes)}m"
+                                break
+        except Exception as e:
+            # Silent fail, uptime remains "N/A"
             pass
 
         return {
@@ -567,8 +683,8 @@ class ComprehensiveDashboard(BasePage):
             'web_service': web_running,
             'uptime': uptime,
             'cpu': cpu_percent,
-            'memory': int(memory.used / 1024 / 1024),  # MB
-            'memory_percent': memory.percent,
+            'memory': memory_mb,
+            'memory_percent': memory_percent,
             'db_size': self.format_size(db_size)
         }
 
@@ -667,18 +783,20 @@ class ComprehensiveDashboard(BasePage):
                 active_provider = status.get('active_provider')
                 providers = status.get('providers', [])
 
-                if active_provider:
-                    ai_status['provider'] = active_provider.capitalize()
+                if active_provider and active_provider.lower() != 'none':
+                    # Set provider name properly
+                    ai_status['provider'] = active_provider
 
                     # Find the active provider's details
                     for provider in providers:
-                        if provider['name'].lower() == active_provider.lower():
+                        if provider.get('name', '').lower() == active_provider.lower():
                             ai_status['available'] = provider.get('available', False)
                             ai_status['host'] = provider.get('host', 'N/A')
                             ai_status['model'] = provider.get('model', 'N/A')
                             ai_status['model_loaded'] = provider.get('current_model_loaded', False)
-                            # Measure response time
-                            if ai_status['available']:
+
+                            # For Ollama, measure response time
+                            if ai_status['available'] and provider.get('name', '').lower() == 'ollama':
                                 import requests
                                 import time
                                 try:
@@ -690,6 +808,11 @@ class ComprehensiveDashboard(BasePage):
                                 except:
                                     pass
                             break
+                else:
+                    # No AI provider configured or available
+                    ai_status['provider'] = 'Not Configured'
+                    ai_status['model'] = 'None'
+                    ai_status['available'] = False
 
             # Get analyses count from database
             try:

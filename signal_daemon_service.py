@@ -151,10 +151,14 @@ class SignalDaemonPollingService:
         self.print_status()
 
         try:
+            # Use signal-cli path from database or auto-detected path
+            signal_cli_path = self.db.get_config("signal_cli_path") or self.signal_cli_path
+            self.logger.info(f"Using signal-cli at: {signal_cli_path}")
+            
             # Initialize daemon messaging service
             self.messaging = MessagingDaemonService(
                 self.db,
-                signal_cli_path="/usr/local/bin/signal-cli",
+                signal_cli_path=signal_cli_path,
                 logger=self.logger
             )
 

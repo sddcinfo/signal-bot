@@ -149,12 +149,14 @@ class SignalPollingService:
             # Initialize messaging service if not already done
             if not self.messaging:
                 try:
+                    # Use signal-cli path from database or auto-detected path
+                    signal_cli_path = self.db.get_config("signal_cli_path") or self.signal_cli_path
                     self.messaging = MessagingService(
                         self.db,
-                        signal_cli_path="/usr/local/bin/signal-cli",
+                        signal_cli_path=signal_cli_path,
                         logger=self.logger
                     )
-                    self.logger.info("Messaging service initialized")
+                    self.logger.info(f"Messaging service initialized with signal-cli at: {signal_cli_path}")
                 except Exception as e:
                     self.logger.error("Failed to initialize messaging service: %s", e)
                     return False
@@ -186,12 +188,14 @@ class SignalPollingService:
         self.logger.info("Performing initial message sync...")
         try:
             if not self.messaging:
+                # Use signal-cli path from database or auto-detected path
+                signal_cli_path = self.db.get_config("signal_cli_path") or self.signal_cli_path
                 self.messaging = MessagingService(
                     self.db,
-                    signal_cli_path="/usr/local/bin/signal-cli",
+                    signal_cli_path=signal_cli_path,
                     logger=self.logger
                 )
-                self.logger.info("Messaging service initialized for startup sync")
+                self.logger.info(f"Messaging service initialized for startup sync with signal-cli at: {signal_cli_path}")
 
             # Poll immediately on startup to get any queued messages
             messages_processed = self.messaging.poll_and_process_messages(timeout_seconds=10)

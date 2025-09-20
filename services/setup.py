@@ -15,6 +15,8 @@ import json
 import time
 import logging
 import subprocess
+import sys
+import os
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
@@ -98,8 +100,10 @@ class SetupService:
             if result.stderr:
                 self.logger.debug(f"signal-cli listAccounts stderr: {result.stderr}")
 
-            if result.returncode != 0:
-                self.logger.error(f"signal-cli listAccounts failed: {result.stderr}")
+            # Don't fail on non-zero return code - signal-cli may still provide output
+            # even when there are errors with some accounts
+            if result.returncode != 0 and not result.stdout:
+                self.logger.error(f"signal-cli listAccounts failed with no output: {result.stderr}")
                 return []
 
             devices = []
@@ -111,22 +115,31 @@ class SetupService:
 
                 # Parse phone number
                 if line.startswith('Number: '):
-                    current_number = line.replace('Number: ', '').strip()
-
-                    # Create device with phone number (UUID may not be available in all cases)
+                    # If we have a previous number/UUID pair, save it
                     if current_number:
                         devices.append(SignalDevice(
                             phone_number=current_number,
                             uuid=current_uuid or "",  # Use empty string if UUID not available
                             is_primary=True
                         ))
-                        self.logger.info(f"Found linked device: {current_number}")
-                        current_number = None
-                        current_uuid = None
+                        self.logger.info(f"Found linked device: {current_number} (UUID: {current_uuid or 'not available'})")
+                    
+                    # Start new device record
+                    current_number = line.replace('Number: ', '').strip()
+                    current_uuid = None
 
                 # Parse UUID (optional)
                 elif line.startswith('UUID: '):
                     current_uuid = line.replace('UUID: ', '').strip()
+            
+            # Don't forget the last device if it exists
+            if current_number:
+                devices.append(SignalDevice(
+                    phone_number=current_number,
+                    uuid=current_uuid or "",  # Use empty string if UUID not available
+                    is_primary=True
+                ))
+                self.logger.info(f"Found linked device: {current_number} (UUID: {current_uuid or 'not available'})")
 
             self.logger.info(f"Detected {len(devices)} linked Signal devices")
             return devices
@@ -141,6 +154,7 @@ class SetupService:
     def auto_configure_bot(self) -> Optional[SignalDevice]:
         """
         Auto-configure bot by detecting primary linked device.
+        Prefers devices with valid UUIDs over those without.
 
         Returns:
             Primary device if found, None otherwise
@@ -151,17 +165,39 @@ class SetupService:
             self.logger.warning("No linked Signal devices found")
             return None
 
-        if len(devices) > 1:
-            self.logger.warning(f"Multiple devices found ({len(devices)}), using first one")
+        # Filter devices - prefer those with valid UUIDs
+        devices_with_uuid = [d for d in devices if d.uuid and self._is_uuid(d.uuid)]
+        devices_without_uuid = [d for d in devices if not d.uuid or not self._is_uuid(d.uuid)]
 
-        primary_device = devices[0]
+        if devices_with_uuid:
+            # Prefer devices with valid UUIDs
+            if len(devices_with_uuid) > 1:
+                self.logger.warning(f"Multiple devices with UUIDs found ({len(devices_with_uuid)}), using first one")
+            primary_device = devices_with_uuid[0]
+        elif devices_without_uuid:
+            # Fall back to devices without UUIDs if that's all we have
+            self.logger.warning("No devices with valid UUIDs found, using device without UUID")
+            primary_device = devices_without_uuid[0]
+        else:
+            self.logger.error("No usable devices found")
+            return None
+
+        # If UUID is missing, try to detect it
+        if not primary_device.uuid or not self._is_uuid(primary_device.uuid):
+            self.logger.info(f"UUID not available for {primary_device.phone_number}, attempting to detect...")
+            detected_uuid = self._detect_bot_uuid(primary_device.phone_number)
+            if detected_uuid:
+                primary_device.uuid = detected_uuid
+                self.logger.info(f"Successfully detected UUID: {detected_uuid}")
+            else:
+                self.logger.warning("Could not detect UUID, proceeding without it")
 
         # Store bot configuration
         self.db.set_config("bot_phone_number", primary_device.phone_number)
         self.db.set_config("bot_uuid", primary_device.uuid)
         self.db.set_config("signal_cli_path", self.signal_cli_path)
 
-        self.logger.info(f"Bot configured with device: {primary_device.phone_number} ({primary_device.uuid})")
+        self.logger.info(f"Bot configured with device: {primary_device.phone_number} (UUID: {primary_device.uuid or 'not available'})")
         return primary_device
 
     def discover_groups(self) -> List[SignalGroup]:
@@ -416,16 +452,20 @@ class SetupService:
                         # Convert JSON groups to SignalGroup objects
                         groups = []
                         for jg in json_groups:
-                            # Extract member UUIDs
-                            member_uuids = []
+                            # Extract member data (both UUID and phone)
+                            members_data = []
                             for member in jg.get('members', []):
-                                if member.get('uuid'):
-                                    member_uuids.append(member['uuid'])
+                                # Store member data as dict to preserve both UUID and phone
+                                member_info = {
+                                    'uuid': member.get('uuid'),
+                                    'number': member.get('number')
+                                }
+                                members_data.append(member_info)
 
                             groups.append(SignalGroup(
                                 group_id=jg.get('id', ''),
                                 name=jg.get('name'),
-                                members=member_uuids,
+                                members=members_data,  # Now contains dict with both uuid and number
                                 is_blocked=jg.get('isBlocked', False)
                             ))
             except Exception as e:
@@ -474,21 +514,28 @@ class SetupService:
                 member_uuids = []
                 self.logger.debug(f"Processing {len(signal_group.members)} members for group {signal_group.group_id}")
 
-                for i, member_id in enumerate(signal_group.members):
-                    self.logger.debug(f"Processing member {i+1}/{len(signal_group.members)}: {member_id}")
+                for i, member_data in enumerate(signal_group.members):
+                    self.logger.debug(f"Processing member {i+1}/{len(signal_group.members)}")
 
-                    # Determine if member_id is UUID or phone number
-                    if self._is_uuid(member_id):
-                        user_uuid = member_id
-                        phone_number = None
-                        self.logger.debug(f"Member {member_id} is UUID")
+                    # Handle both dict format (from JSON) and string format (legacy)
+                    if isinstance(member_data, dict):
+                        user_uuid = member_data.get('uuid')
+                        phone_number = member_data.get('number')
+                        self.logger.debug(f"Member UUID: {user_uuid}, Phone: {phone_number}")
+                    elif isinstance(member_data, str):
+                        # Legacy string format - determine if UUID or phone
+                        if self._is_uuid(member_data):
+                            user_uuid = member_data
+                            phone_number = None
+                        else:
+                            # It's a phone number
+                            user_uuid = self._phone_to_uuid(member_data)
+                            phone_number = member_data
                     else:
-                        # It's a phone number, we need to find/create UUID
-                        # For now, use phone number as UUID (not ideal but works)
-                        self.logger.debug(f"Member {member_id} is phone number, converting to UUID")
-                        user_uuid = self._phone_to_uuid(member_id)
-                        phone_number = member_id
-                        self.logger.debug(f"Phone {member_id} -> UUID {user_uuid}")
+                        continue  # Skip invalid member data
+
+                    if not user_uuid:
+                        continue  # Skip members without UUID
 
                     # Use existing user data if available, otherwise create minimal entry
                     # We don't fetch individual profiles during group sync for performance
@@ -786,6 +833,16 @@ class SetupService:
             if len(devices) > 1:
                 self.logger.warning(f"Multiple devices found ({len(devices)}), using first one")
 
+            # Detect UUID if not available
+            if not primary_device.uuid or not self._is_uuid(primary_device.uuid):
+                self.logger.info(f"UUID not available for {primary_device.phone_number}, detecting...")
+                detected_uuid = self._detect_bot_uuid(primary_device.phone_number)
+                if detected_uuid:
+                    primary_device.uuid = detected_uuid
+                    self.logger.info(f"Successfully detected UUID: {detected_uuid}")
+                else:
+                    self.logger.warning("Could not detect UUID, proceeding without it")
+
             # Store bot configuration in database
             self.db.set_config("bot_phone_number", primary_device.phone_number)
             self.db.set_config("bot_uuid", primary_device.uuid)
@@ -793,60 +850,18 @@ class SetupService:
 
             self.logger.info(f"Bot configured with device: {primary_device.phone_number} ({primary_device.uuid})")
 
-            # Step 2: Automatically discover and sync groups
+            # Step 2: Discover and sync groups with members
             self.logger.info("Discovering and syncing Signal groups...")
             groups = self.discover_groups()
 
+            # Step 3: Sync groups properly with members
             if groups:
-                # Store discovered groups in database
-                self.logger.debug(f"Storing {len(groups)} groups to database...")
-                for group in groups:
-                    # Only store non-blocked groups
-                    if not group.is_blocked:
-                        self.logger.debug(f"Storing group: {group.group_id} ({group.name or 'Unknown'})")
-                        # Use the database method directly with correct parameters
-                        self.db.upsert_group(
-                            group_id=group.group_id,
-                            group_name=group.name or "Unknown Group",
-                            is_monitored=False,  # User can enable monitoring via web interface
-                            member_count=len(group.members) if group.members else 0
-                        )
-                        self.logger.debug(f"Successfully stored group: {group.group_id}")
-                    else:
-                        self.logger.debug(f"Skipping blocked group: {group.group_id}")
-
-                active_groups = [g for g in groups if not g.is_blocked]
-                self.logger.info(f"Discovered {len(active_groups)} active groups (filtered {len(groups) - len(active_groups)} blocked)")
+                self.logger.info("Syncing groups with member information...")
+                # Use the proper sync method that handles members correctly
+                synced_count = self.sync_groups_to_database(groups)
+                self.logger.info(f"Synced {synced_count} groups with members")
             else:
                 self.logger.warning("No groups discovered during automatic setup")
-
-            # Step 3: Discover users from groups (if any groups found)
-            total_users = 0
-            if groups:
-                self.logger.info("Discovering users from groups...")
-                for group in groups:
-                    if not group.is_blocked and group.members:
-                        for member in group.members:
-                            # Create user entry (UUID or phone number)
-                            if member:  # Skip empty members
-                                # Determine if member is UUID or phone number
-                                if '@' not in member and not member.startswith('+'):
-                                    # Likely a UUID
-                                    self.db.upsert_user(
-                                        uuid=member,
-                                        phone_number=None,
-                                        friendly_name=f"User {member}"
-                                    )
-                                else:
-                                    # Likely a phone number
-                                    self.db.upsert_user(
-                                        uuid=f"phone_{member}",  # Generate UUID for phone-based users
-                                        phone_number=member,
-                                        friendly_name=f"User {member}"
-                                    )
-                                total_users += 1
-
-                self.logger.info(f"Discovered {total_users} users from groups")
 
             # Step 4: Mark setup as complete
             self.logger.debug("Marking setup as complete in database...")
@@ -856,6 +871,10 @@ class SetupService:
 
             self.logger.info("Automatic setup completed successfully!")
             self.logger.info("Bot is now ready for use. Configure monitoring and reactions through the web interface.")
+            
+            # Note: Signal service will need to be started manually after setup
+            # This is because the service needs proper environment configuration from manage.sh
+            self.logger.info("Please start the Signal service with: ./manage.sh restart")
 
         except Exception as e:
             self.logger.error(f"Error during automatic setup completion: {e}", exc_info=True)
@@ -1053,28 +1072,54 @@ class SetupService:
             return False
 
     def _detect_bot_uuid(self, bot_phone: str) -> Optional[str]:
-        """Detect bot's UUID from signal-cli by parsing receive output."""
+        """
+        Detect bot's UUID from signal-cli using the most reliable method:
+        Send a message to ourselves and get UUID from sourceUuid.
+        
+        This works for all scenarios:
+        - New accounts with no groups
+        - Accounts not in any groups  
+        - Accounts with multiple devices
+        """
         try:
-            cmd = [self.signal_cli_path, "-a", bot_phone, "--output=json", "receive", "--timeout", "1"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
-            if result.returncode == 0 and result.stdout:
-                # Parse JSON output to find our UUID
-                for line in result.stdout.strip().split('\n'):
+            self.logger.info("Detecting UUID by sending self-message...")
+            
+            # Send a message to ourselves - this always generates a message with our UUID
+            send_cmd = [self.signal_cli_path, "-a", bot_phone, "send", "-m", "Bot UUID detection", bot_phone]
+            send_result = subprocess.run(send_cmd, capture_output=True, text=True, timeout=10)
+            
+            if send_result.returncode != 0:
+                self.logger.warning(f"Failed to send self-message: {send_result.stderr}")
+            
+            # Small delay to ensure message is processed
+            time.sleep(2)
+            
+            # Receive messages to get our UUID from sourceUuid
+            receive_cmd = [self.signal_cli_path, "--output=json", "-a", bot_phone, "receive", "--timeout", "3"]
+            receive_result = subprocess.run(receive_cmd, capture_output=True, text=True, timeout=15)
+            
+            if receive_result.returncode == 0 and receive_result.stdout:
+                for line in receive_result.stdout.strip().split('\n'):
                     if line.strip():
                         try:
                             data = json.loads(line)
-                            if 'envelope' in data and 'sourceUuid' in data['envelope']:
-                                # This is our own UUID when we see sync messages
-                                source_uuid = data['envelope']['sourceUuid']
-                                if self._is_uuid(source_uuid):
+                            envelope = data.get('envelope', {})
+                            
+                            # Check if this is a message from us (self-message or sync)
+                            if envelope.get('sourceNumber') == bot_phone:
+                                source_uuid = envelope.get('sourceUuid')
+                                if source_uuid and self._is_uuid(source_uuid):
+                                    self.logger.info(f"Successfully detected bot UUID: {source_uuid}")
                                     return source_uuid
                         except json.JSONDecodeError:
                             continue
-            return None
+            else:
+                self.logger.warning("No messages received after self-send")
         except Exception as e:
-            self.logger.warning(f"Failed to detect bot UUID: {e}")
-            return None
+            self.logger.error(f"Failed to detect UUID via self-message: {e}")
+        
+        self.logger.error(f"Could not detect UUID for {bot_phone}")
+        return None
 
     def sync_user_profiles(self, bot_phone: str) -> bool:
         """
