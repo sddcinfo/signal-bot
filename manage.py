@@ -15,6 +15,8 @@ import argparse
 import subprocess
 import shutil
 import json
+import logging
+import logging.handlers
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
@@ -36,20 +38,104 @@ class SignalBotManager:
         self.project_root = Path(__file__).parent
         self.venv_path = self.project_root / "venv"
         self.python_cmd = str(self.venv_path / "bin" / "python3") if self.venv_path.exists() else "python3"
+        self.debug_mode = False
+        self.debug_logger = None
+        self.setup_debug_logging()
+
+    def setup_debug_logging(self):
+        """Configure comprehensive debug logging based on environment variables."""
+        # Check for debug mode
+        if any([
+            os.environ.get('SIGNAL_BOT_DEBUG') == '1',
+            os.environ.get('DEBUG') == '1',
+            os.environ.get('SIGNAL_BOT_LOG_LEVEL') == 'DEBUG'
+        ]):
+            self.debug_mode = True
+
+            # Configure root logger for comprehensive logging
+            log_format = os.environ.get(
+                'LOG_FORMAT',
+                '%(asctime)s.%(msecs)03d [%(process)d:%(thread)d] %(name)s.%(funcName)s:%(lineno)d %(levelname)s: %(message)s'
+            )
+            date_format = os.environ.get('LOG_DATE_FORMAT', '%Y-%m-%d %H:%M:%S')
+
+            # Create debug logger
+            self.debug_logger = logging.getLogger('SignalBotDebug')
+            self.debug_logger.setLevel(logging.DEBUG)
+
+            # File handler for debug log
+            debug_log = os.environ.get('DEBUG_LOG', 'signal_bot_debug.log')
+            file_handler = logging.handlers.RotatingFileHandler(
+                debug_log,
+                maxBytes=100*1024*1024,  # 100MB
+                backupCount=5
+            )
+            file_handler.setLevel(logging.DEBUG)
+            file_formatter = logging.Formatter(log_format, datefmt=date_format)
+            file_handler.setFormatter(file_formatter)
+            self.debug_logger.addHandler(file_handler)
+
+            # Console handler for immediate feedback
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(logging.DEBUG if self.debug_mode else logging.INFO)
+            console_formatter = logging.Formatter(
+                '%(asctime)s [%(levelname)s] %(message)s',
+                datefmt='%H:%M:%S'
+            )
+            console_handler.setFormatter(console_formatter)
+            self.debug_logger.addHandler(console_handler)
+
+            # Configure all Python loggers to DEBUG level
+            logging.basicConfig(
+                level=logging.DEBUG,
+                format=log_format,
+                datefmt=date_format,
+                handlers=[file_handler, console_handler]
+            )
+
+            # Enable SQL logging if requested
+            if os.environ.get('SIGNAL_BOT_SQL_DEBUG') == '1':
+                logging.getLogger('sqlalchemy.engine').setLevel(logging.DEBUG)
+                logging.getLogger('sqlalchemy.pool').setLevel(logging.DEBUG)
+
+            self.debug_log("Debug mode initialized", {
+                'python_version': sys.version,
+                'debug_env_vars': {k: v for k, v in os.environ.items() if 'DEBUG' in k or 'TRACE' in k},
+                'working_dir': os.getcwd(),
+                'pid': os.getpid()
+            })
+
+    def debug_log(self, message: str, data: Optional[Dict] = None):
+        """Log a debug message with optional structured data."""
+        if self.debug_logger:
+            if data:
+                import json
+                self.debug_logger.debug(f"{message}\nData: {json.dumps(data, indent=2, default=str)}")
+            else:
+                self.debug_logger.debug(message)
 
     # ========== Service Management ==========
 
     def start(self, service: Optional[str] = None, daemon_mode: bool = False, debug: bool = False) -> bool:
         """Start Signal Bot services."""
-        # Set debug mode environment variable for child processes
-        if debug:
+        # Enable debug if requested or if environment variable is set
+        if debug or self.debug_mode:
+            debug = True
             os.environ['LOG_LEVEL'] = 'DEBUG'
+            os.environ['SIGNAL_BOT_DEBUG'] = '1'
             print("🐛 Debug mode enabled")
+            self.debug_log(f"Starting services", {
+                'service': service,
+                'daemon_mode': daemon_mode,
+                'debug': debug,
+                'environment': dict(os.environ)
+            })
         else:
             os.environ['LOG_LEVEL'] = 'INFO'
 
         if service == "signal" or service is None:
             print(f"Starting Signal service{'(daemon mode)' if daemon_mode else ''}...")
+            self.debug_log(f"Starting Signal service", {'daemon_mode': daemon_mode})
             if daemon_mode:
                 self._start_signal_daemon(debug=debug)
             else:
@@ -57,6 +143,7 @@ class SignalBotManager:
 
         if service == "web" or service is None:
             print("Starting Web server...")
+            self.debug_log("Starting Web server", {'debug': debug})
             self._start_web_server(debug=debug)
 
         if service is None:
@@ -74,7 +161,7 @@ class SignalBotManager:
         elif service == "web":
             patterns = ["web_server.py"]
         else:
-            patterns = ["signal_service.py", "signal_daemon_service.py", "web_server.py", "signal_bot.py"]
+            patterns = ["signal_service.py", "signal_daemon_service.py", "web_server.py"]
 
         for pattern in patterns:
             self._kill_process(pattern)
@@ -397,7 +484,29 @@ class SignalBotManager:
         cmd = f"{self.python_cmd} signal_service.py --force"
         if debug:
             cmd += " --debug"
-        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Prepare environment with debug settings
+        env = os.environ.copy()
+        if debug or self.debug_mode:
+            env.update({
+                'SIGNAL_SERVICE_DEBUG': '1',
+                'SIGNAL_SERVICE_TRACE': '1',
+                'SIGNAL_BOT_VERBOSE': '1'
+            })
+
+        self.debug_log(f"Starting signal_service.py", {
+            'command': cmd,
+            'env_vars': {k: v for k, v in env.items() if 'DEBUG' in k or 'SIGNAL' in k}
+        })
+
+        # Redirect output to debug log in debug mode
+        if debug or self.debug_mode:
+            debug_log_file = open('signal_bot_debug.log', 'a')
+            process = subprocess.Popen(cmd, shell=True, stdout=debug_log_file, stderr=subprocess.STDOUT, env=env)
+        else:
+            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+
+        self.debug_log(f"Signal service started", {'pid': process.pid if hasattr(process, 'pid') else 'unknown'})
         time.sleep(2)
 
     def _start_signal_daemon(self, debug: bool = False) -> None:
@@ -405,7 +514,31 @@ class SignalBotManager:
         cmd = f"{self.python_cmd} signal_daemon_service.py --force"
         if debug:
             cmd += " --debug"
-        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Prepare environment with debug settings
+        env = os.environ.copy()
+        if debug or self.debug_mode:
+            env.update({
+                'SIGNAL_SERVICE_DEBUG': '1',
+                'SIGNAL_SERVICE_TRACE': '1',
+                'SIGNAL_RPC_DEBUG': '1',
+                'SIGNAL_RPC_TRACE': '1',
+                'SIGNAL_BOT_VERBOSE': '1'
+            })
+
+        self.debug_log(f"Starting signal_daemon_service.py", {
+            'command': cmd,
+            'env_vars': {k: v for k, v in env.items() if 'DEBUG' in k or 'SIGNAL' in k}
+        })
+
+        # Redirect output to debug log in debug mode
+        if debug or self.debug_mode:
+            debug_log_file = open('signal_bot_debug.log', 'a')
+            process = subprocess.Popen(cmd, shell=True, stdout=debug_log_file, stderr=subprocess.STDOUT, env=env)
+        else:
+            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+
+        self.debug_log(f"Signal daemon started", {'pid': process.pid if hasattr(process, 'pid') else 'unknown'})
         time.sleep(3)  # Daemon takes longer to initialize
 
     def _start_web_server(self, debug: bool = False) -> None:
@@ -413,7 +546,34 @@ class SignalBotManager:
         cmd = f"{self.python_cmd} web_server.py --host={self.config.WEB_HOST}"
         if debug:
             cmd += " --debug"
-        subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Prepare environment with debug settings
+        env = os.environ.copy()
+        if debug or self.debug_mode:
+            env.update({
+                'WEB_SERVER_DEBUG': '1',
+                'WEB_SERVER_TRACE': '1',
+                'FLASK_ENV': 'development',
+                'FLASK_DEBUG': '1',
+                'AI_SERVICE_DEBUG': '1',
+                'AI_SERVICE_TRACE': '1'
+            })
+
+        self.debug_log(f"Starting web_server.py", {
+            'command': cmd,
+            'host': self.config.WEB_HOST,
+            'port': self.config.WEB_PORT,
+            'env_vars': {k: v for k, v in env.items() if 'DEBUG' in k or 'WEB' in k or 'FLASK' in k}
+        })
+
+        # Redirect output to debug log in debug mode
+        if debug or self.debug_mode:
+            debug_log_file = open('signal_bot_debug.log', 'a')
+            process = subprocess.Popen(cmd, shell=True, stdout=debug_log_file, stderr=subprocess.STDOUT, env=env)
+        else:
+            process = subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+
+        self.debug_log(f"Web server started", {'pid': process.pid if hasattr(process, 'pid') else 'unknown'})
         time.sleep(2)
 
     def _kill_process(self, pattern: str) -> None:
@@ -438,7 +598,7 @@ class SignalBotManager:
         try:
             for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'memory_info', 'cpu_percent']):
                 cmdline = ' '.join(proc.info['cmdline'] or [])
-                if any(x in cmdline for x in ['signal_service.py', 'signal_daemon_service.py', 'web_server.py', 'signal_bot.py']):
+                if any(x in cmdline for x in ['signal_service.py', 'signal_daemon_service.py', 'web_server.py']):
                     processes.append({
                         'pid': proc.info['pid'],
                         'name': cmdline.split()[-1] if cmdline else proc.info['name'],

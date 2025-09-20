@@ -354,6 +354,154 @@ class SettingsPage(BasePage):
                 }
             }
 
+            // AI Analysis Types functions
+            async function loadAnalysisTypes() {
+                const container = document.getElementById('analysis-types-list');
+                container.innerHTML = '<div class="loading">Loading analysis types...</div>';
+
+                try {
+                    const response = await fetch('/api/ai-analysis/types');
+                    const data = await response.json();
+
+                    if (data.status === 'success' && data.types) {
+                        displayAnalysisTypes(data.types);
+                    } else {
+                        container.innerHTML = '<div class="error">Error loading analysis types</div>';
+                    }
+                } catch (error) {
+                    container.innerHTML = '<div class="error">Error: ' + error.message + '</div>';
+                }
+            }
+
+            function displayAnalysisTypes(types) {
+                const container = document.getElementById('analysis-types-list');
+
+                if (types.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No analysis types configured</div>';
+                    return;
+                }
+
+                let html = '<div class="analysis-types">';
+                types.forEach(type => {
+                    const isBuiltin = type.is_builtin === 1;
+                    const isActive = type.is_active === 1;
+
+                    html += `
+                        <div class="analysis-type-card" style="border: 1px solid #dee2e6; padding: 15px; margin-bottom: 15px; border-radius: 8px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <h4 style="margin: 0;">
+                                    <span style="font-size: 1.5em; margin-right: 10px;">${type.icon || '🤖'}</span>
+                                    ${type.display_name}
+                                    ${isBuiltin ? '<span style="background: #e7f3ff; color: #004085; padding: 2px 6px; border-radius: 3px; font-size: 0.7em; margin-left: 10px;">Built-in</span>' : ''}
+                                </h4>
+                                <div>
+                                    <button class="btn btn-sm ${isActive ? 'btn-success' : 'btn-secondary'}"
+                                            onclick="toggleAnalysisType(${type.id})"
+                                            style="padding: 5px 10px; margin-right: 5px;">
+                                        ${isActive ? 'Active' : 'Inactive'}
+                                    </button>
+                                    ${!isBuiltin ? `
+                                        <button class="btn btn-sm btn-primary" onclick="editAnalysisType(${type.id})" style="padding: 5px 10px; margin-right: 5px;">Edit</button>
+                                        <button class="btn btn-sm btn-danger" onclick="deleteAnalysisType(${type.id})" style="padding: 5px 10px;">Delete</button>
+                                    ` : ''}
+                                </div>
+                            </div>
+                            <p style="color: #666; margin: 10px 0 5px 0;">${type.description || 'No description'}</p>
+                            <div style="font-size: 0.85em; color: #999;">
+                                <span style="margin-right: 15px;">Min messages: ${type.min_messages}</span>
+                                <span style="margin-right: 15px;">Max hours: ${type.max_hours}</span>
+                                ${type.requires_group ? '<span style="margin-right: 15px;">Requires group</span>' : ''}
+                                ${type.requires_sender ? '<span>Requires sender filter</span>' : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+
+                container.innerHTML = html;
+            }
+
+            async function toggleAnalysisType(id) {
+                try {
+                    const response = await fetch(`/api/ai-analysis/type/${id}/toggle`, { method: 'POST' });
+                    const data = await response.json();
+
+                    if (data.status === 'success') {
+                        loadAnalysisTypes();
+                    } else {
+                        alert('Error toggling analysis type: ' + data.error);
+                    }
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                }
+            }
+
+            async function deleteAnalysisType(id) {
+                if (!confirm('Are you sure you want to delete this analysis type?')) return;
+
+                try {
+                    const response = await fetch(`/api/ai-analysis/type/${id}`, { method: 'DELETE' });
+                    const data = await response.json();
+
+                    if (data.status === 'success') {
+                        loadAnalysisTypes();
+                    } else {
+                        alert('Error deleting analysis type: ' + data.error);
+                    }
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                }
+            }
+
+            function editAnalysisType(id) {
+                // TODO: Implement edit functionality
+                alert('Edit functionality coming soon!');
+            }
+
+            function showAddAnalysisType() {
+                const form = document.getElementById('add-analysis-form');
+                form.style.display = form.style.display === 'none' ? 'block' : 'none';
+            }
+
+            async function saveNewAnalysisType() {
+                const config = {
+                    name: document.getElementById('new-type-name').value,
+                    display_name: document.getElementById('new-type-display').value,
+                    description: document.getElementById('new-type-description').value,
+                    icon: document.getElementById('new-type-icon').value || '🤖',
+                    prompt_template: document.getElementById('new-type-prompt').value,
+                    requires_group: document.getElementById('new-type-requires-group').checked,
+                    requires_sender: document.getElementById('new-type-requires-sender').checked,
+                    min_messages: parseInt(document.getElementById('new-type-min-messages').value) || 5,
+                    max_hours: parseInt(document.getElementById('new-type-max-hours').value) || 168
+                };
+
+                if (!config.name || !config.display_name || !config.prompt_template) {
+                    alert('Please fill in all required fields');
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/ai-analysis/type', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(config)
+                    });
+                    const data = await response.json();
+
+                    if (data.status === 'success') {
+                        // Clear form
+                        document.getElementById('add-analysis-form').style.display = 'none';
+                        document.getElementById('new-analysis-form').reset();
+                        loadAnalysisTypes();
+                    } else {
+                        alert('Error saving analysis type: ' + data.error);
+                    }
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                }
+            }
+
             function displayProviders(data) {
                 const container = document.getElementById('providers-container');
 
@@ -471,6 +619,7 @@ class SettingsPage(BasePage):
             <div class="tabs">
                 <button class="tab-btn {'active' if tab == 'setup' else ''}" onclick="switchTab('setup')">Setup</button>
                 <button class="tab-btn {'active' if tab == 'ai-config' else ''}" onclick="switchTab('ai-config')">AI Configuration</button>
+                <button class="tab-btn {'active' if tab == 'analysis-types' else ''}" onclick="switchTab('analysis-types')">AI Analysis Types</button>
             </div>
 
             <!-- Setup Tab -->
@@ -606,5 +755,94 @@ class SettingsPage(BasePage):
                     </div>
                 </div>
             </div>
+
+            <!-- AI Analysis Types Tab -->
+            <div id="analysis-types-tab" class="tab-content {'active' if tab == 'analysis-types' else ''}">
+                <!-- Add New Type -->
+                <div class="card">
+                    <h3>AI Analysis Types</h3>
+                    <p style="color: #666; margin-bottom: 15px;">Configure custom AI analysis types for processing your messages.</p>
+
+                    <button class="btn btn-primary" onclick="showAddAnalysisType()" style="margin-bottom: 15px;">
+                        Add New Analysis Type
+                    </button>
+
+                    <!-- Add Form (Hidden by default) -->
+                    <div id="add-analysis-form" style="display: none; border: 1px solid #dee2e6; padding: 20px; border-radius: 8px; background: #f8f9fa; margin-bottom: 20px;">
+                        <h4>New Analysis Type</h4>
+                        <form id="new-analysis-form">
+                            <div class="form-group">
+                                <label for="new-type-name">Internal Name*:</label>
+                                <input type="text" id="new-type-name" class="form-control" placeholder="e.g., weekly_report" required style="width: 300px;">
+                                <small style="color: #666;">Unique identifier, no spaces</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="new-type-display">Display Name*:</label>
+                                <input type="text" id="new-type-display" class="form-control" placeholder="e.g., Weekly Report" required style="width: 300px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="new-type-icon">Icon:</label>
+                                <input type="text" id="new-type-icon" class="form-control" placeholder="e.g., 📊" value="🤖" style="width: 100px;">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="new-type-description">Description:</label>
+                                <textarea id="new-type-description" class="form-control" rows="2" placeholder="Brief description of what this analysis does" style="width: 100%;"></textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="new-type-prompt">Prompt Template*:</label>
+                                <textarea id="new-type-prompt" class="form-control" rows="8" required style="width: 100%; font-family: monospace; font-size: 0.9em;"
+                                          placeholder="Analyze the following messages from {{group_name}}:&#10;&#10;Time Period: Last {{hours}} hours&#10;Message Count: {{message_count}}&#10;&#10;Messages:&#10;{{messages}}&#10;&#10;Please provide..."></textarea>
+                                <small style="color: #666;">Available placeholders: {{group_name}}, {{hours}}, {{message_count}}, {{messages}}</small>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                <div class="form-group">
+                                    <label for="new-type-min-messages">Minimum Messages:</label>
+                                    <input type="number" id="new-type-min-messages" class="form-control" value="5" min="1" style="width: 100px;">
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="new-type-max-hours">Max Hours Back:</label>
+                                    <input type="number" id="new-type-max-hours" class="form-control" value="168" min="1" style="width: 100px;">
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="new-type-requires-group" checked>
+                                    Requires group selection
+                                </label>
+                            </div>
+
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="new-type-requires-sender">
+                                    Requires sender filter
+                                </label>
+                            </div>
+
+                            <div style="display: flex; gap: 10px;">
+                                <button type="button" class="btn btn-primary" onclick="saveNewAnalysisType()">Save</button>
+                                <button type="button" class="btn btn-secondary" onclick="document.getElementById('add-analysis-form').style.display='none';">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Existing Types List -->
+                <div class="card">
+                    <h3>Configured Analysis Types</h3>
+                    <div id="analysis-types-list">
+                        <div class="loading">Loading analysis types...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Initialize scripts based on active tab -->
             {ai_init_script}
+            {'<script>window.addEventListener("DOMContentLoaded", function() {{ loadAnalysisTypes(); }});</script>' if tab == 'analysis-types' else ''}
         """

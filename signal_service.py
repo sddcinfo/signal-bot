@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-Standalone Signal CLI Polling Service
+Signal Bot Polling Service
 
-Handles Signal CLI polling and message processing independently from the web interface.
-This allows restarting the web interface without interrupting message processing.
+Polls Signal CLI for incoming messages and processes them through the message handler.
+Runs independently from the web interface to ensure continuous message processing.
+
+Key features:
+- Periodic polling of Signal CLI receive command
+- Message persistence to database
+- Reaction and auto-reply support
+- Group and user synchronization
+- Graceful shutdown handling
 """
 import os
 from config.settings import Config

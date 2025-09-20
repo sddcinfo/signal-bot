@@ -1,18 +1,13 @@
 # Environment configuration files (contains sensitive data)
 .env
 
-# Log files
+# Runtime files
 *.log
-signal_bot.log
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Lock and PID files
-*.lock
 *.pid
+*.lock
+signal_bot.db
+signal_bot_debug.log
+malloc_trace.log
 
 # Python cache and compiled files
 __pycache__/
@@ -20,24 +15,50 @@ __pycache__/
 *$py.class
 *.so
 
-# OS specific files
-.DS_Store
-Thumbs.db
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
 # Virtual environment
 venv/
 env/
 ENV/
 
+# Backup files
+*.bak
+*.backup
+*.old
+*~
+.*.swp
+.*.swo
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
 # Temporary files
 temp/
 tmp/
-# Obsolete code archive
+
+# Archives and old code
 oldcode/
+backups/
+migrations/
+
+# Signal-cli data
+.local/
+
+# Test coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Distribution
+dist/
+build/
+*.egg-info/

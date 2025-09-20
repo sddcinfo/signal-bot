@@ -215,6 +215,7 @@ class OllamaProvider(AIProvider):
                     "model": self.model,
                     "prompt": prompt,
                     "stream": False,
+                    "keep_alive": "1h",  # Keep model loaded for 1 hour
                     "options": {
                         "temperature": 0.7,
                         "num_predict": 2000
@@ -403,6 +404,7 @@ class OllamaProvider(AIProvider):
                 "model": self.model,
                 "prompt": "Hello",
                 "stream": False,
+                "keep_alive": "1h",  # Keep model loaded for 1 hour
                 "options": {
                     "num_predict": 1
                 }

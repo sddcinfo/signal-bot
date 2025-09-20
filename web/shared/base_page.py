@@ -10,8 +10,6 @@ from urllib.parse import parse_qs
 
 from models.database import DatabaseManager
 from services.setup import SetupService
-from services.sentiment import SentimentAnalyzer
-from services.summarization import MessageSummarizer
 from .templates import render_page, get_standard_date_selector
 
 
@@ -22,8 +20,9 @@ class BasePage(ABC):
         self.db = db
         self.setup_service = setup_service
         self.ai_provider = ai_provider
-        self.sentiment_analyzer = SentimentAnalyzer(db) if ai_provider else None
-        self.summarizer = MessageSummarizer(db) if ai_provider else None
+        # AI analysis services are handled by AIAnalysisService
+        self.sentiment_analyzer = None
+        self.summarizer = None
 
     @property
     @abstractmethod

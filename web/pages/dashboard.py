@@ -5,7 +5,7 @@ A modern, feature-rich dashboard that displays all bot capabilities and real-tim
 """
 
 import os
-import psutil
+# import psutil
 import sqlite3
 import json
 from datetime import datetime, timedelta
@@ -526,18 +526,21 @@ class ComprehensiveDashboard(BasePage):
         web_running = False
 
         try:
-            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-                cmdline = ' '.join(proc.info['cmdline'] or [])
-                if 'signal_service.py' in cmdline:
-                    signal_running = True
-                elif 'web_server.py' in cmdline:
-                    web_running = True
+            import subprocess
+            # Check for signal_service.py
+            result = subprocess.run(['pgrep', '-f', 'signal_service.py'], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                signal_running = True
+            # Check for web_server.py
+            result = subprocess.run(['pgrep', '-f', 'web_server.py'], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                web_running = True
         except:
             pass
 
-        # Get system metrics
-        cpu_percent = psutil.cpu_percent(interval=1)
-        memory = psutil.virtual_memory()
+        # Get system metrics (placeholder without psutil)
+        cpu_percent = 0
+        memory = type('Memory', (), {'percent': 0, 'total': 0, 'available': 0, 'used': 0})()
 
         # Get database size
         db_path = Path(self.db.db_path)

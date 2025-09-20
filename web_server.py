@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-Standalone Web Server for Signal Bot
+Signal Bot Web Server
 
-Runs the web interface independently from the Signal CLI polling service.
-This allows restarting the web interface without interrupting message processing.
+Provides the web-based management interface for the Signal bot.
+Runs independently from message processing services.
+
+Key features:
+- Dashboard with real-time statistics
+- Message viewer with filtering
+- Group and user management
+- AI configuration and analysis
+- System settings and setup wizard
 """
 import os
 from config.settings import Config
@@ -61,7 +68,8 @@ class StandaloneWebServer:
             self.setup_service,
             ai_provider=self.ai_provider,
             port=self.port,
-            host=self.host
+            host=self.host,
+            logger=self.logger
         )
 
         # Setup signal handlers

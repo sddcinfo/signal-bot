@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-Signal Daemon Service - Uses daemon mode instead of polling
+Signal Bot Daemon Service
 
-This service uses signal-cli in daemon mode for more reliable message handling.
-All operations go through a single daemon connection.
+Uses Signal CLI's JSON-RPC daemon mode for real-time message processing.
+More efficient than polling as it maintains a persistent connection.
+
+Key features:
+- Real-time message reception via JSON-RPC
+- Bidirectional communication support
+- Socket-based communication with signal-cli
+- Automatic reconnection on failures
+- Group and contact synchronization
 """
 import os
 import sys

@@ -114,19 +114,19 @@ class GlobalFilterSystem:
                     <div style="display: flex; gap: 10px; align-items: center;">
                         <label style="display: flex; align-items: center; font-size: 0.9em; cursor: pointer;">
                             <input type="radio" name="date-mode" id="global-date-mode-all" value="all" {date_all_checked}
-                                   onchange="document.getElementById('global-date').style.display='none'; document.getElementById('global-date').value=''; GlobalFilters.apply();"
+                                   onchange="document.getElementById('global-date').style.display='none'; document.getElementById('global-date').value=''; document.getElementById('hours-filter-container').style.display='block'; GlobalFilters.apply();"
                                    style="margin-right: 3px;">
                             All Dates
                         </label>
                         <label style="display: flex; align-items: center; font-size: 0.9em; cursor: pointer;">
                             <input type="radio" name="date-mode" id="global-date-mode-today" value="today" {date_today_checked}
-                                   onchange="document.getElementById('global-date').style.display='none'; GlobalFilters.apply();"
+                                   onchange="document.getElementById('global-date').style.display='none'; document.getElementById('hours-filter-container').style.display='block'; GlobalFilters.apply();"
                                    style="margin-right: 3px;">
                             Today
                         </label>
                         <label style="display: flex; align-items: center; font-size: 0.9em; cursor: pointer;">
                             <input type="radio" name="date-mode" id="global-date-mode-specific" value="specific" {date_specific_checked}
-                                   onchange="document.getElementById('global-date').style.display='inline-block'; if(!document.getElementById('global-date').value) document.getElementById('global-date').value=new Date().toISOString().split('T')[0]; GlobalFilters.apply();"
+                                   onchange="document.getElementById('global-date').style.display='inline-block'; if(!document.getElementById('global-date').value) document.getElementById('global-date').value=new Date().toISOString().split('T')[0]; document.getElementById('hours-filter-container').style.display='none'; document.getElementById('global-hours-filter').value='0'; GlobalFilters.apply();"
                                    style="margin-right: 3px;">
                             Pick Date
                         </label>
@@ -135,8 +135,8 @@ class GlobalFilterSystem:
                     </div>
                 </div>
 
-                <!-- Hours Filter (Recent Messages) -->
-                <div class="filter-group" style="min-width: 140px;">
+                <!-- Hours Filter (Recent Messages) - Hidden when specific date is selected -->
+                <div class="filter-group" id="hours-filter-container" style="min-width: 140px; display: {'none' if date_mode == 'specific' else 'block'};">
                     <label for="global-hours-filter" style="display: block; margin-bottom: 3px; font-weight: bold; font-size: 0.9em;">
                         Recent Hours:
                     </label>
@@ -269,6 +269,11 @@ class GlobalFilterSystem:
 
             // Reset all filters
             reset: function() {
+                // Clear session storage to prevent filter persistence
+                if (typeof sessionStorage !== 'undefined') {
+                    sessionStorage.removeItem('signalbot_filters');
+                }
+
                 const currentUrl = new URL(window.location);
                 const tab = currentUrl.searchParams.get('tab');
 
@@ -362,6 +367,7 @@ class GlobalFilterSystem:
     def parse_query_filters(query: Dict[str, Any]) -> Dict[str, Any]:
         """
         Parse query parameters into filter values.
+        Always returns date as a string (or None) for consistency.
 
         Args:
             query: Query dictionary from URL parameters
@@ -372,17 +378,81 @@ class GlobalFilterSystem:
         date_mode = query.get('date_mode', ['all'])[0]
         date = query.get('date', [''])[0] if 'date' in query else None
 
-        # If date_mode is 'today' but no date is provided, use today's date
+        # If date_mode is 'today' but no date is provided, use today's date as string
         if date_mode == 'today' and not date:
-            from datetime import date as dt
-            date = dt.today().isoformat()
+            from datetime import date as date_type
+            date = date_type.today().isoformat()  # Always returns a string
+
+        # Get hours filter, but set to 0 if specific date is selected
+        hours = int(query.get('hours', ['24'])[0]) if 'hours' in query else 24
+        if date_mode == 'specific':
+            # When specific date is selected, ignore hours filter
+            hours = 0
 
         return {
             'group_id': query.get('group_id', [''])[0] if 'group_id' in query else None,
             'sender_id': query.get('sender_id', [''])[0] if 'sender_id' in query else None,
-            'date': date,
-            'hours': int(query.get('hours', ['24'])[0]) if 'hours' in query else 24,
+            'date': date,  # Always a string or None
+            'hours': hours,
             'date_mode': date_mode,
             'attachments_only': query.get('attachments_only', [''])[0] == 'true',
             'timezone': query.get('timezone', ['UTC'])[0]
         }
+
+    @staticmethod
+    def get_date_range_from_filters(filters: Dict[str, Any], user_timezone: str = 'UTC'):
+        """
+        Convert filter parameters to date range.
+
+        Args:
+            filters: Parsed filter dictionary from parse_query_filters
+            user_timezone: User's timezone string
+
+        Returns:
+            Tuple of (start_date, end_date) as datetime objects
+        """
+        from datetime import datetime, timedelta
+        import pytz
+
+        tz = pytz.timezone(user_timezone)
+        now = datetime.now(tz)
+
+        # Handle date_mode
+        date_mode = filters.get('date_mode', 'all')
+        hours = filters.get('hours', 0)
+        date = filters.get('date')
+
+        if date_mode == 'specific' and date:
+            # Specific date: entire day in user's timezone
+            from datetime import date as date_type
+
+            # Handle different input types
+            if isinstance(date, str):
+                # Parse string to datetime
+                date_obj = datetime.strptime(date, '%Y-%m-%d')
+            elif isinstance(date, datetime):
+                # Already a datetime - use it but remove any timezone info
+                date_obj = date.replace(tzinfo=None)
+            elif isinstance(date, date_type):
+                # Date object - convert to datetime
+                date_obj = datetime.combine(date, datetime.min.time())
+            else:
+                # Fallback: Convert to string then parse
+                date_obj = datetime.strptime(str(date), '%Y-%m-%d')
+
+            start_date = tz.localize(date_obj.replace(hour=0, minute=0, second=0))
+            end_date = start_date + timedelta(days=1)
+        elif date_mode == 'today':
+            # Today: from midnight to now in user's timezone
+            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = now
+        elif hours and hours > 0:
+            # Recent hours
+            start_date = now - timedelta(hours=hours)
+            end_date = now
+        else:
+            # All time
+            start_date = None
+            end_date = None
+
+        return start_date, end_date

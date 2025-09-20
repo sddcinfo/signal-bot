@@ -7,7 +7,7 @@ from typing import Dict, Any
 from urllib.parse import quote
 from ..shared.base_page import BasePage
 from ..shared.filters import GlobalFilterSystem
-from ..shared.filter_utils import get_date_range_from_filters
+# Filter utils now integrated into GlobalFilterSystem
 from models.user_display_utils import get_user_display_sql
 
 
@@ -102,103 +102,6 @@ class MessagesPage(BasePage):
                         });
                     }
                 });
-
-                // Activity Tab Functions - Old Version Style
-                function loadActivityData() {
-                    // Get date from global filter
-                    const dateMode = document.getElementById('global-date-mode').value;
-                    let date = dateMode === 'specific' ? document.getElementById('global-date').value : '';
-
-                    // If no specific date and using specific mode, default to today
-                    if (dateMode === 'specific' && !date) {
-                        const today = new Date();
-                        date = today.getFullYear() + '-' +
-                            String(today.getMonth() + 1).padStart(2, '0') + '-' +
-                            String(today.getDate()).padStart(2, '0');
-                    }
-
-                    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                    let url = `/api/activity/hourly?date=${date}&timezone=${encodeURIComponent(timezone)}`;
-
-                    // Use global filters
-                    const groupId = document.getElementById('global-group-filter').value;
-                    if (groupId) {
-                        url += `&group_id=${encodeURIComponent(groupId)}`;
-                    }
-
-                    fetch(url)
-                        .then(response => response.json())
-                        .then(data => {
-                            renderCharts(data);
-                        })
-                        .catch(error => {
-                            console.error('Error loading activity data:', error);
-                            document.getElementById('activity-charts-container').innerHTML =
-                                '<div class="text-center text-muted"><p>Error loading activity data</p></div>';
-                        });
-                }
-
-                function renderCharts(data) {
-                    const container = document.getElementById('activity-charts-container');
-                    container.innerHTML = '';
-
-                    if (!data.hourly_data || Object.keys(data.hourly_data).length === 0) {
-                        container.innerHTML = '<div class="text-center text-muted">No activity data for this date</div>';
-                        return;
-                    }
-
-                    // Colors for different groups
-                    const colors = ['#007bff', '#28a745', '#dc3545', '#ffc107', '#17a2b8', '#6f42c1', '#fd7e14'];
-                    let colorIndex = 0;
-
-                    for (const [groupName, hourlyData] of Object.entries(data.hourly_data)) {
-                        const color = colors[colorIndex % colors.length];
-                        colorIndex++;
-
-                        const chartDiv = document.createElement('div');
-                        chartDiv.className = 'chart-container';
-                        chartDiv.innerHTML = `
-                            <div class="chart" id="chart-${groupName.replace(/[^a-zA-Z0-9]/g, '')}"></div>
-                        `;
-                        container.appendChild(chartDiv);
-
-                        renderBarChart(`chart-${groupName.replace(/[^a-zA-Z0-9]/g, '')}`, hourlyData, color);
-                    }
-                }
-
-                function renderBarChart(containerId, data, color) {
-                    const container = document.getElementById(containerId);
-                    const maxValue = Math.max(...Object.values(data));
-                    const totalMessages = Object.values(data).reduce((sum, val) => sum + val, 0);
-                    const chartHeight = 200;
-
-                    let chartHtml = `<div class="chart-title">Activity Pattern - ${totalMessages} messages</div><div class="bar-chart">`;
-
-                    for (let hour = 0; hour < 24; hour++) {
-                        const value = data[hour] || 0;
-                        const barHeight = maxValue > 0 ? (value / maxValue) * chartHeight : 0;
-
-                        chartHtml += `
-                            <div class="bar-container">
-                                <div class="bar" style="height: ${barHeight}px; background-color: ${color};" title="${hour}:00 - ${value} messages">
-                                    ${value > 0 ? `<span class="bar-count" style="position: absolute; top: -20px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #666; white-space: nowrap;">${value}</span>` : ''}
-                                </div>
-                                <div class="bar-label">${hour}</div>
-                            </div>
-                        `;
-                    }
-
-                    chartHtml += '</div>';
-                    container.innerHTML = chartHtml;
-                }
-
-                // Auto-load data when activity tab is shown
-                document.addEventListener('DOMContentLoaded', function() {
-                    if (window.location.href.includes('tab=activity')) {
-                        // Load activity data automatically when tab is shown
-                        setTimeout(loadActivityData, 500);
-                    }
-                });
         """
         return js_code
 
@@ -257,30 +160,52 @@ class MessagesPage(BasePage):
             content = self._render_senders_tab(query)
         elif tab == 'all':
             content = self._render_all_tab(query)
-        elif tab == 'sentiment':
-            content = self._render_sentiment_tab(query)
-        elif tab == 'summary':
-            content = self._render_summary_tab(query)
+        elif tab == 'ai-analysis':
+            content = self._render_ai_analysis_tab(query)
         else:
             content = self._render_groups_tab(query)
 
         # Generate global filters
         global_filters = self._render_global_filters(query)
 
+        # Get configuration values for JavaScript
+        selected_group_id = query.get('group_id', [None])[0] or ''
+        selected_sender_id = query.get('sender_id', [None])[0] or ''
+        selected_date = query.get('date', [None])[0] or ''
+        selected_hours = query.get('hours', ['24'])[0]
+        user_timezone = self.get_user_timezone(query)
+
         return f"""
+            <!-- Configuration for JavaScript -->
+            <div id="page-config" style="display: none;"
+                 data-timezone="{user_timezone}"
+                 data-group-id="{selected_group_id}"
+                 data-sender-id="{selected_sender_id}"
+                 data-date="{selected_date}"
+                 data-hours="{selected_hours}">
+            </div>
+
             {global_filters}
 
             <div class="tabs">
                 <a href="javascript:void(0)" onclick="switchTab('groups')" class="tab-btn {'active' if tab == 'groups' else ''}">By Group</a>
                 <a href="javascript:void(0)" onclick="switchTab('senders')" class="tab-btn {'active' if tab == 'senders' else ''}">By Sender</a>
                 <a href="javascript:void(0)" onclick="switchTab('all')" class="tab-btn {'active' if tab == 'all' else ''}">All Messages</a>
-                <a href="javascript:void(0)" onclick="switchTab('sentiment')" class="tab-btn {'active' if tab == 'sentiment' else ''}">Sentiment</a>
-                <a href="javascript:void(0)" onclick="switchTab('summary')" class="tab-btn {'active' if tab == 'summary' else ''}">Summary</a>
+                <a href="javascript:void(0)" onclick="switchTab('ai-analysis')" class="tab-btn {'active' if tab == 'ai-analysis' else ''}">AI Analysis</a>
             </div>
 
             <div id="{tab}-tab" class="tab-content active">
                 {content}
             </div>
+
+            <!-- External JavaScript Files -->
+            <script src="/static/js/messages-common.js"></script>
+            <script src="/static/js/filter-manager.js"></script>
+            <script src="/static/js/groups-tab.js"></script>
+            <script src="/static/js/senders-tab.js"></script>
+            <script src="/static/js/all-tab.js"></script>
+            <script src="/static/js/ai-analysis-messages.js"></script>
+            <script src="/static/js/activity-tab.js"></script>
         """
 
     def _render_groups_tab(self, query: Dict[str, Any]) -> str:
@@ -323,7 +248,22 @@ class MessagesPage(BasePage):
         groups_with_messages = []
 
         # Get date range from filters using centralized logic
-        start_date, end_date = get_date_range_from_filters(filters)
+        # Convert datetime to strings for database
+        if filters.get('date'):
+            # Specific date selected - use it directly
+            start_date = filters['date']
+            end_date = filters['date']
+        elif filters.get('hours', 0) > 0:
+            # Use hours filter to calculate date range
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            start_time = now - timedelta(hours=filters['hours'])
+            start_date = start_time.strftime('%Y-%m-%d')
+            end_date = now.strftime('%Y-%m-%d')
+        else:
+            # No date filter - show all
+            start_date = None
+            end_date = None
 
         for group in monitored_groups:
             try:
@@ -840,7 +780,22 @@ class MessagesPage(BasePage):
         attachments_only = filters.get('attachments_only', False)
 
         # Get date range from filters using centralized logic
-        start_date, end_date = get_date_range_from_filters(filters)
+        # Convert datetime to strings for database
+        if filters.get('date'):
+            # Specific date selected - use it directly
+            start_date = filters['date']
+            end_date = filters['date']
+        elif filters.get('hours', 0) > 0:
+            # Use hours filter to calculate date range
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            start_time = now - timedelta(hours=filters['hours'])
+            start_date = start_time.strftime('%Y-%m-%d')
+            end_date = now.strftime('%Y-%m-%d')
+        else:
+            # No date filter - show all
+            start_date = None
+            end_date = None
 
         # Get messages using database filtering
         user_timezone = self.get_user_timezone(query)
@@ -878,9 +833,15 @@ class MessagesPage(BasePage):
         else:
             for msg in messages:
                 message_text = msg.get('message_text', '')
-                if not message_text or message_text.strip() == '':
+                # Don't skip messages with attachments even if text is empty
+                attachments = msg.get('attachments', [])
+                if (not message_text or message_text.strip() == '') and not attachments:
                     continue
-                if len(message_text) > 200:
+
+                # Handle empty message text for attachment-only messages
+                if not message_text and attachments:
+                    message_text = '[Attachment]'
+                elif len(message_text) > 200:
                     message_text = message_text[:200] + '...'
 
                 # Process mentions in message text
@@ -900,10 +861,21 @@ class MessagesPage(BasePage):
                         attachment_id = attachment.get('attachment_id', '')
                         file_name = attachment.get('file_name', attachment.get('filename', 'Unknown'))
                         content_type = attachment.get('content_type', '')
-                        if attachment_id and content_type and content_type.startswith('image/'):
-                            attachments_html += f'<img src="/attachment/{attachment_id}" alt="{file_name}" class="attachment-image">'
+                        sticker_id = attachment.get('sticker_id', '')
+                        # Check if it's a sticker
+                        is_sticker = content_type == 'sticker' or attachment.get('pack_id') or sticker_id
+                        if is_sticker:
+                            # Display sticker (stickers are usually WebP images)
+                            # Use sticker_id if attachment_id is not available
+                            display_id = attachment_id or sticker_id
+                            if display_id and attachment.get('file_data'):
+                                attachments_html += f'<img src="/attachment/{display_id}" alt="Sticker" class="attachment-sticker" style="max-width: 150px; max-height: 150px; margin: 5px;">'
+                            else:
+                                attachments_html += f'<div class="attachment-sticker" style="padding: 10px; background: #f0f0f0; border-radius: 8px; margin: 5px; display: inline-block;">🎭 Sticker</div>'
+                        elif attachment_id and content_type and content_type.startswith('image/'):
+                            attachments_html += f'<img src="/attachment/{attachment_id}" alt="{file_name}" class="attachment-image" style="max-width: 300px; max-height: 300px; margin: 5px; border-radius: 8px;">'
                         elif attachment_id and content_type and content_type.startswith('video/'):
-                            attachments_html += f'<video src="/attachment/{attachment_id}" autoplay loop muted playsinline class="attachment-video" title="{file_name}"></video>'
+                            attachments_html += f'<video src="/attachment/{attachment_id}" controls class="attachment-video" title="{file_name}" style="max-width: 300px; max-height: 300px;"></video>'
                         elif attachment_id:
                             attachments_html += f'<div class="attachment-file">📎 {file_name}</div>'
                     attachments_html += '</div>'
@@ -1032,6 +1004,94 @@ class MessagesPage(BasePage):
                 message_text = before + mention_html + after
 
         return message_text
+
+    def _render_ai_analysis_tab(self, query: Dict[str, Any]) -> str:
+        """Render the unified AI Analysis tab content."""
+        # Get parameters from global filters
+        selected_group_id = query.get('group_id', [None])[0]
+        selected_date = query.get('date', [None])[0]
+        user_timezone = self.get_user_timezone(query)
+
+        # Get available analysis types from database
+        try:
+            from services.ai_analysis import AIAnalysisService
+            ai_service = AIAnalysisService(self.db)
+            analysis_types = ai_service.get_analysis_types()
+        except Exception as e:
+            self.logger.error(f"Error getting analysis types: {e}")
+            analysis_types = []
+
+        # Build analysis type options for dropdown
+        options_html = []
+        types_json = {}
+        for atype in analysis_types:
+            icon = atype.get('icon', '🤖')
+            display_name = atype.get('display_name', 'Unknown')
+            options_html.append(f'<option value="{atype["id"]}">{icon} {display_name}</option>')
+            types_json[str(atype['id'])] = {
+                'name': atype['name'],
+                'display_name': atype['display_name'],
+                'description': atype.get('description', ''),
+                'icon': atype.get('icon', '🤖'),
+                'requires_group': atype.get('requires_group', True),
+                'requires_sender': atype.get('requires_sender', False),
+                'min_messages': atype.get('min_messages', 5),
+                'max_hours': atype.get('max_hours', 168)
+            }
+
+        import json
+
+        return f"""
+            <div class="ai-analysis-tab-content">
+                <h2>🤖 AI Message Analysis</h2>
+                <p>Use AI to analyze and extract insights from your messages</p>
+
+                <div class="analysis-selector" style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                    <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 250px;">
+                            <label for="analysis-type-select" style="display: block; margin-bottom: 5px; font-weight: bold;">
+                                Analysis Type:
+                            </label>
+                            <select id="analysis-type-select" class="form-control"
+                                    style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                                <option value="">-- Select Analysis Type --</option>
+                                {''.join(options_html)}
+                            </select>
+                            <small id="analysis-description" class="text-muted" style="display: block; margin-top: 5px;"></small>
+                        </div>
+
+                        <div style="display: flex; gap: 10px;">
+                            <button onclick="showMessageAnalysisPreview()" class="btn btn-secondary"
+                                    style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                                <span class="icon">👁️</span> Preview
+                            </button>
+                            <button onclick="runMessageAnalysis()" class="btn btn-primary"
+                                    style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                                <span class="icon">🚀</span> Run Analysis
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Preview Area -->
+                    <div id="analysis-preview" style="display: none; margin-top: 15px; padding: 10px; background: white; border-radius: 5px; border: 1px solid #dee2e6;">
+                        <div id="analysis-preview-content"></div>
+                    </div>
+                </div>
+
+                <!-- Results Area -->
+                <div id="analysis-results" style="display: none;">
+                    <div class="results-header" style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                        <h3 id="analysis-title" style="margin: 0;"></h3>
+                    </div>
+                    <div id="analysis-content" class="results-content"></div>
+                </div>
+            </div>
+
+            <!-- Analysis Type Configurations -->
+            <script>
+                const messageAnalysisTypes = {json.dumps(types_json)};
+            </script>
+        """
 
     def _render_sentiment_tab(self, query: Dict[str, Any]) -> str:
         """Render the Sentiment Analysis tab content."""
@@ -1252,11 +1312,6 @@ class MessagesPage(BasePage):
 
     def _render_summary_tab(self, query: Dict[str, Any]) -> str:
         """Render the Summary tab content."""
-        # Get parameters from global filters - same as sentiment tab
-        selected_group_id = query.get('group_id', [None])[0]
-        selected_date = query.get('date', [None])[0]
-        user_timezone = self.get_user_timezone(query)
-
         return f"""
             <div class="summary-tab-content">
                 <h2>Message Summaries</h2>
@@ -1284,201 +1339,6 @@ class MessagesPage(BasePage):
                     </div>
                     <div id="summary-content"></div>
                 </div>
-
-                <script>
-                    let currentSummaryTimezone = '{user_timezone}';
-                    let currentSummaryHours = 24; // Default to 24 hours
-
-                    // Auto-load cached results if group and date are already selected from global filters
-                    document.addEventListener('DOMContentLoaded', function() {{
-                        const groupId = '{selected_group_id or ""}';
-                        const date = '{selected_date or ""}';
-
-                        if (groupId && date) {{
-                            loadCachedSummaryResults(groupId, date);
-                        }}
-                    }});
-
-                    function getGlobalFiltersForSummary() {{
-                        // Get current values from global filter form
-                        const groupSelect = document.getElementById('global-group-filter');
-                        const dateInput = document.getElementById('global-date');
-
-                        return {{
-                            groupId: groupSelect ? groupSelect.value : '',
-                            date: dateInput ? dateInput.value : ''
-                        }};
-                    }}
-
-                    function showSummaryPreview() {{
-                        const filters = getGlobalFiltersForSummary();
-
-                        if (!filters.groupId || !filters.date) {{
-                            showNotification('Please select both a group and date using the filters above', 'warning');
-                            return;
-                        }}
-
-                        const url = `/api/summary-preview?group_id=${{encodeURIComponent(filters.groupId)}}&date=${{filters.date}}&timezone=${{encodeURIComponent(currentSummaryTimezone)}}&hours=${{currentSummaryHours}}`;
-
-                        fetch(url)
-                            .then(response => response.json())
-                            .then(data => {{
-                                if (data.status === 'success') {{
-                                    const previewDiv = document.getElementById('summary-preview');
-                                    const previewContent = document.getElementById('summary-preview-content');
-
-                                    previewContent.innerHTML = `
-                                        <p><strong>Group:</strong> ${{data.group_name}}</p>
-                                        <p><strong>Date:</strong> ${{data.date}}</p>
-                                        <p><strong>Hours:</strong> ${{data.hours}}</p>
-                                        <p><strong>Messages:</strong> ${{data.message_count}}</p>
-                                        <p><strong>AI Status:</strong> ${{data.ai_ready ? 'Ready' : 'Loading...'}}</p>
-                                        <div style="color: #155724; background: #d4edda; border: 1px solid #c3e6cb; padding: 10px; border-radius: 5px; margin-top: 10px;">
-                                            ${{data.preview_text}}
-                                        </div>`;
-
-                                    previewDiv.style.display = 'block';
-                                }} else {{
-                                    showNotification(data.error || 'Failed to get preview', 'error');
-                                }}
-                            }});
-                    }}
-
-                    function loadCachedSummaryResults(groupId, date) {{
-                        const url = `/api/summary-cached?group_id=${{encodeURIComponent(groupId)}}&date=${{date}}&timezone=${{encodeURIComponent(currentSummaryTimezone)}}&hours=${{currentSummaryHours}}`;
-
-                        fetch(url)
-                            .then(response => response.json())
-                            .then(data => {{
-                                if (data.status === 'cached') {{
-                                    renderSummaryResults(data);
-                                }}
-                            }});
-                    }}
-
-                    function renderSummaryResults(data) {{
-                        const resultsDiv = document.getElementById('summary-results');
-                        const contentDiv = document.getElementById('summary-content');
-
-                        if (!data || data.status === 'error' || data.status === 'no_messages') {{
-                            contentDiv.innerHTML = `<div class="text-center text-muted">${{data.error || data.summary || 'No messages to summarize for this date'}}</div>`;
-                            resultsDiv.style.display = 'block';
-                            return;
-                        }}
-
-                        // Handle the actual API response format
-                        const groupName = data.group_name || 'Unknown Group';
-                        const messageCount = data.message_count || 0;
-                        const summary = data.summary || 'No summary available';
-                        const keyTopics = data.key_topics || [];
-                        const aiProvider = data.ai_provider || data.provider_info || 'Unknown';
-                        const isLocal = data.is_local || false;
-                        const analyzedAt = data.analyzed_at || data.cached_at || '';
-
-                        // Convert markdown to HTML for better display
-                        const summaryHtml = summary
-                            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                            .replace(/### (.*?)\n/g, '<h4>$1</h4>\n')
-                            .replace(/## (.*?)\n/g, '<h3>$1</h3>\n')
-                            .replace(/\n\n/g, '</p><p>')
-                            .replace(/\n/g, '<br>');
-
-                        let topicsHtml = '';
-                        if (keyTopics.length > 0) {{
-                            topicsHtml = `
-                                <div style="margin-top: 15px;">
-                                    <h4 style="margin-bottom: 10px; color: #495057;">Key Topics:</h4>
-                                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                                        ${{keyTopics.map(topic => `<span style="display: inline-block; padding: 4px 12px; background: #e7f1ff; color: #0056b3; border-radius: 15px; font-size: 0.9em; border: 1px solid #b3d7ff;">${{topic}}</span>`).join('')}}
-                                    </div>
-                                </div>
-                            `;
-                        }}
-
-                        contentDiv.innerHTML = `
-                            <p><strong>Group:</strong> ${{groupName}}</p>
-                            <p><strong>Messages analyzed:</strong> ${{messageCount}}</p>
-                            <p><strong>Provider:</strong> ${{aiProvider}} ${{isLocal ? '(Local)' : '(External)'}}</p>
-                            ${{analyzedAt ? '<p><strong>Generated at:</strong> ' + new Date(analyzedAt).toLocaleString() + '</p>' : ''}}
-                            <hr>
-                            <div style="line-height: 1.6; color: #333; margin-top: 15px;">
-                                <p>${{summaryHtml}}</p>
-                            </div>
-                            ${{topicsHtml}}
-                        `;
-
-                        resultsDiv.style.display = 'block';
-                    }}
-
-                    function pollSummaryStatus(jobId) {{
-                        const checkStatus = () => {{
-                            fetch(`/api/summary?job_id=${{jobId}}`)
-                                .then(response => response.json())
-                                .then(data => {{
-                                    if (data.status === 'running') {{
-                                        // Update status text
-                                        const contentDiv = document.getElementById('summary-content');
-                                        contentDiv.innerHTML = `<div class="text-center">Generating summary... (${{data.current_step || 'Processing'}})</div>`;
-                                        // Continue polling
-                                        setTimeout(checkStatus, 2000);
-                                    }} else if (data.status === 'error') {{
-                                        showNotification('Error generating summary: ' + (data.error || 'Unknown error'), 'error');
-                                        const contentDiv = document.getElementById('summary-content');
-                                        contentDiv.innerHTML = `<div class="text-center text-muted">Failed to generate summary</div>`;
-                                    }} else {{
-                                        // Success - render the summary
-                                        renderSummaryResults(data);
-                                    }}
-                                }})
-                                .catch(error => {{
-                                    console.error('Error checking summary status:', error);
-                                    const contentDiv = document.getElementById('summary-content');
-                                    contentDiv.innerHTML = `<div class="text-center text-muted">Failed to check summary status</div>`;
-                                }});
-                        }};
-
-                        // Start polling
-                        checkStatus();
-                    }}
-
-                    function generateSummary(forceRefresh) {{
-                        const filters = getGlobalFiltersForSummary();
-
-                        if (!filters.groupId || !filters.date) {{
-                            showNotification('Please select both a group and date using the filters above', 'warning');
-                            return;
-                        }}
-
-                        // Show loading state
-                        const resultsDiv = document.getElementById('summary-results');
-                        const contentDiv = document.getElementById('summary-content');
-                        contentDiv.innerHTML = '<div class="text-center">Generating summary...</div>';
-                        resultsDiv.style.display = 'block';
-
-                        const url = `/api/summary?group_id=${{encodeURIComponent(filters.groupId)}}&date=${{filters.date}}&timezone=${{encodeURIComponent(currentSummaryTimezone)}}&hours=${{currentSummaryHours}}${{forceRefresh ? '&force=true' : ''}}&async=true`;
-
-                        fetch(url)
-                        .then(response => response.json())
-                        .then(data => {{
-                            if (data.status === 'started' && data.job_id) {{
-                                // Async job started - poll for status
-                                pollSummaryStatus(data.job_id);
-                            }} else if (data.status === 'success' || data.status === 'cached' || data.summary) {{
-                                // Directly render the returned summary
-                                renderSummaryResults(data);
-                            }} else if (data.status === 'error') {{
-                                showNotification('Error generating summary: ' + (data.error || 'Unknown error'), 'error');
-                                contentDiv.innerHTML = `<div class="text-center text-muted">Failed to generate summary</div>`;
-                            }}
-                        }})
-                        .catch(error => {{
-                            showNotification('Error generating summary: ' + error, 'error');
-                            contentDiv.innerHTML = `<div class="text-center text-muted">Failed to generate summary</div>`;
-                        }});
-                    }}
-
-                    // Use the shared showNotification function defined globally
-                </script>
             </div>
         """
 
