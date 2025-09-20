@@ -54,19 +54,29 @@ class SignalGroup:
 class SetupService:
     """Manages bot setup and configuration."""
 
-    def __init__(self, db_manager: DatabaseManager, signal_cli_path: str = "/usr/local/bin/signal-cli",
+    def __init__(self, db_manager: DatabaseManager, signal_cli_path: str = None,
                  logger: Optional[logging.Logger] = None):
         """
         Initialize setup service.
 
         Args:
             db_manager: Database manager instance
-            signal_cli_path: Path to signal-cli executable
+            signal_cli_path: Path to signal-cli executable (auto-detected if None)
             logger: Optional logger instance
         """
         self.db = db_manager
-        self.signal_cli_path = signal_cli_path
         self.logger = logger or logging.getLogger(__name__)
+
+        # Auto-detect signal-cli path if not provided
+        if signal_cli_path:
+            self.signal_cli_path = signal_cli_path
+        else:
+            self.signal_cli_path = self._find_signal_cli_path()
+            if self.signal_cli_path:
+                self.logger.info(f"Auto-detected signal-cli at: {self.signal_cli_path}")
+            else:
+                self.logger.warning("signal-cli not found, using default path")
+                self.signal_cli_path = "/usr/local/bin/signal-cli"
 
         # Track active linking processes
         self.active_linking_processes = []
@@ -987,13 +997,59 @@ class SetupService:
 
         return results
 
+    def _find_signal_cli_path(self) -> Optional[str]:
+        """Find signal-cli executable in common locations."""
+        # Check common paths in order of preference
+        paths_to_check = [
+            "/opt/homebrew/bin/signal-cli",  # Homebrew on Apple Silicon Macs
+            "/usr/local/bin/signal-cli",      # Homebrew on Intel Macs or Linux
+            "/usr/bin/signal-cli",             # System package manager
+            "/snap/bin/signal-cli",            # Snap package
+        ]
+
+        # Also check if signal-cli is in PATH
+        try:
+            result = subprocess.run(["which", "signal-cli"],
+                                  capture_output=True, text=True, timeout=2)
+            if result.returncode == 0 and result.stdout.strip():
+                path_from_which = result.stdout.strip()
+                if path_from_which not in paths_to_check:
+                    paths_to_check.insert(0, path_from_which)
+        except Exception:
+            pass
+
+        # Test each path
+        for path in paths_to_check:
+            try:
+                if subprocess.run([path, "--version"],
+                                capture_output=True, text=True, timeout=2).returncode == 0:
+                    return path
+            except Exception:
+                continue
+
+        return None
+
     def _check_signal_cli(self) -> bool:
         """Check if signal-cli is available and working."""
         try:
-            cmd = [self.signal_cli_path, "--version"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            return result.returncode == 0
+            # Re-detect path in case it was installed after initialization
+            if not subprocess.run([self.signal_cli_path, "--version"],
+                                capture_output=True, text=True, timeout=5).returncode == 0:
+                # Try to find it again
+                new_path = self._find_signal_cli_path()
+                if new_path:
+                    self.signal_cli_path = new_path
+                    self.logger.info(f"Updated signal-cli path to: {new_path}")
+                    return True
+                return False
+            return True
         except Exception:
+            # Try to find signal-cli again
+            new_path = self._find_signal_cli_path()
+            if new_path:
+                self.signal_cli_path = new_path
+                self.logger.info(f"Found signal-cli at: {new_path}")
+                return True
             return False
 
     def _detect_bot_uuid(self, bot_phone: str) -> Optional[str]:

@@ -11,11 +11,57 @@ Usage:
 """
 
 import os
+import subprocess
 from pathlib import Path
 from typing import Optional
 
 # Base directory of the project
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def find_signal_cli_path() -> str:
+    """
+    Auto-detect signal-cli path from common locations.
+    Returns the first working signal-cli path found.
+    """
+    # Check environment variable first
+    env_path = os.getenv('SIGNAL_CLI_PATH')
+    if env_path and Path(env_path).exists():
+        return env_path
+
+    # Common paths to check
+    paths_to_check = [
+        '/opt/homebrew/bin/signal-cli',  # Homebrew on Apple Silicon Macs
+        '/usr/local/bin/signal-cli',      # Homebrew on Intel Macs or Linux
+        '/usr/bin/signal-cli',             # System package manager
+        '/snap/bin/signal-cli',            # Snap package
+    ]
+
+    # Check if signal-cli is in PATH
+    try:
+        result = subprocess.run(['which', 'signal-cli'],
+                              capture_output=True, text=True, timeout=2)
+        if result.returncode == 0 and result.stdout.strip():
+            path_from_which = result.stdout.strip()
+            if path_from_which not in paths_to_check:
+                paths_to_check.insert(0, path_from_which)
+    except Exception:
+        pass
+
+    # Test each path
+    for path in paths_to_check:
+        if Path(path).exists():
+            try:
+                # Verify it actually works
+                result = subprocess.run([path, '--version'],
+                                      capture_output=True, text=True, timeout=2)
+                if result.returncode == 0:
+                    return path
+            except Exception:
+                continue
+
+    # Default fallback
+    return '/usr/local/bin/signal-cli'
 
 
 class Config:
@@ -31,7 +77,7 @@ class Config:
     """
 
     # ============= Core Paths =============
-    SIGNAL_CLI_PATH: str = os.getenv('SIGNAL_CLI_PATH', '/usr/local/bin/signal-cli')
+    SIGNAL_CLI_PATH: str = find_signal_cli_path()
     DATABASE_PATH: str = os.getenv('DATABASE_PATH', 'signal_bot.db')
 
     # ============= Logging Configuration =============

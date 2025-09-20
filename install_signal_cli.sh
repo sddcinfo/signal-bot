@@ -84,7 +84,53 @@ echo "INFO: Target signal-cli version: $VERSION"
 if [ "$SKIP_CHECKS" = false ]; then
     echo ""
     echo "--- Step 0: Checking existing installation... ---"
-    
+
+    # Check for Homebrew installation on macOS
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "INFO: macOS detected. Checking for Homebrew signal-cli installation..."
+
+        # Check common Homebrew paths
+        if [ -f "/opt/homebrew/bin/signal-cli" ]; then
+            echo "SUCCESS: signal-cli found via Homebrew at /opt/homebrew/bin/signal-cli"
+            SIGNAL_CLI_PATH="/opt/homebrew/bin/signal-cli"
+
+            # Verify it works
+            if "$SIGNAL_CLI_PATH" --version &> /dev/null; then
+                VERSION_OUTPUT=$("$SIGNAL_CLI_PATH" --version 2>&1)
+                echo "INFO: Homebrew signal-cli is working: $VERSION_OUTPUT"
+                echo "SUCCESS: Using existing Homebrew signal-cli installation."
+                exit 0
+            else
+                echo "WARNING: Homebrew signal-cli found but not working properly."
+            fi
+        elif [ -f "/usr/local/bin/signal-cli" ]; then
+            echo "INFO: signal-cli found at /usr/local/bin/signal-cli"
+            SIGNAL_CLI_PATH="/usr/local/bin/signal-cli"
+
+            if "$SIGNAL_CLI_PATH" --version &> /dev/null; then
+                VERSION_OUTPUT=$("$SIGNAL_CLI_PATH" --version 2>&1)
+                echo "INFO: signal-cli is working: $VERSION_OUTPUT"
+                echo "SUCCESS: Using existing signal-cli installation."
+                exit 0
+            fi
+        fi
+
+        # Check if brew is available and suggest installation
+        if command -v brew &> /dev/null; then
+            echo "INFO: Homebrew is installed. You can install signal-cli with:"
+            echo "  brew install signal-cli"
+            echo ""
+            echo "After installation, signal-cli will be available at /opt/homebrew/bin/signal-cli"
+            exit 0
+        else
+            echo "INFO: Homebrew not found. For macOS, it's recommended to install Homebrew first:"
+            echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            echo "Then install signal-cli with:"
+            echo "  brew install signal-cli"
+            exit 0
+        fi
+    fi
+
     if ! command -v signal-cli &> /dev/null; then
         echo "INFO: No existing signal-cli installation found. Proceeding with installation."
     else

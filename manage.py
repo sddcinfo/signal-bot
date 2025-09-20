@@ -639,7 +639,29 @@ class SignalBotManager:
         """Check if signal-cli is available."""
         signal_info = {'available': False, 'path': None, 'version': None}
 
-        paths = ['/usr/local/bin/signal-cli', '/usr/bin/signal-cli']
+        # Check common signal-cli paths
+        paths = [
+            '/opt/homebrew/bin/signal-cli',  # Homebrew on Apple Silicon Macs
+            '/usr/local/bin/signal-cli',      # Homebrew on Intel Macs or Linux
+            '/usr/bin/signal-cli',             # System package manager
+            '/snap/bin/signal-cli'             # Snap package
+        ]
+
+        # Also check if signal-cli is in PATH
+        try:
+            result = subprocess.run(['which', 'signal-cli'],
+                                  capture_output=True, text=True, timeout=2)
+            if result.returncode == 0 and result.stdout.strip():
+                path_from_which = result.stdout.strip()
+                if path_from_which not in paths:
+                    paths.insert(0, path_from_which)
+        except Exception:
+            pass
+
+        # Also check the configured path from settings
+        if self.config.SIGNAL_CLI_PATH and self.config.SIGNAL_CLI_PATH not in paths:
+            paths.insert(0, self.config.SIGNAL_CLI_PATH)
+
         for path in paths:
             if Path(path).exists():
                 signal_info['available'] = True
