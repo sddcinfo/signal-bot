@@ -228,13 +228,68 @@ SQLite database is automatically created at `signal_bot.db` with schema:
    - Fast inference for open models
    - Requires API key
 
-### Custom Analysis Types
+### AI Analysis Management
 
-Create custom AI analysis workflows through the web interface:
-1. Navigate to AI Config
-2. Click "Add Analysis Type"
-3. Configure prompt and parameters
-4. Use in AI Analysis page
+The bot includes a comprehensive AI Analysis Types management system accessible through multiple interfaces:
+
+#### Web Interface Management
+1. Navigate to AI Config page
+2. View, add, edit, or delete analysis types
+3. Configure prompts and parameters
+4. Test analysis types directly from the interface
+
+#### Command-Line Management
+Use the `manage_ai_types.py` script for managing AI analysis types:
+
+```bash
+# List all analysis types
+python manage_ai_types.py list
+
+# Add a new analysis type
+python manage_ai_types.py add --name "custom_type" --display-name "Custom Analysis"
+
+# Edit an existing type
+python manage_ai_types.py edit --id 1 --description "Updated description"
+
+# Delete an analysis type
+python manage_ai_types.py delete --id 5
+
+# View detailed information
+python manage_ai_types.py show --id 1
+```
+
+#### Built-in Analysis Types
+
+The system includes four pre-configured analysis types:
+
+1. **Message Summary** (`summary`)
+   - Comprehensive summary of conversation topics and key points
+   - Extracts key topics, action items, and notable moments
+   - Ideal for daily/weekly digests
+
+2. **Sentiment Analysis** (`sentiment`)
+   - Analyzes emotional tone and mood of conversations
+   - Provides sentiment scores and emotional themes
+   - Tracks participant dynamics and trends
+
+3. **Topic Extraction** (`topics`)
+   - Extracts and categorizes main discussion topics
+   - Shows topic flow and transitions
+   - Identifies actionable items and unresolved discussions
+
+4. **Daily Highlights** (`highlights`)
+   - Extracts the most important or interesting moments
+   - Captures key announcements, decisions, and achievements
+   - Perfect for creating bulletin-style daily digests
+
+#### Creating Custom Analysis Types
+
+Custom analysis types can include:
+- Custom prompt templates with placeholders
+- Group and sender filtering requirements
+- Time range configurations
+- Privacy settings for anonymization
+- Display customization (icons, colors, sort order)
 
 ## Development
 
