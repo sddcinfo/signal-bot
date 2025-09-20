@@ -845,4 +845,39 @@ class SettingsPage(BasePage):
             <!-- Initialize scripts based on active tab -->
             {ai_init_script}
             {'<script>window.addEventListener("DOMContentLoaded", function() {{ loadAnalysisTypes(); }});</script>' if tab == 'analysis-types' else ''}
+
+            <script>
+            // Simple notification function
+            function showNotification(message, type = 'info') {{
+                const notification = document.createElement('div');
+                notification.className = `alert alert-${{type}}`;
+                notification.textContent = message;
+                notification.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    z-index: 9999;
+                    min-width: 250px;
+                    padding: 12px 20px;
+                    animation: slideIn 0.3s ease;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+                `;
+
+                document.body.appendChild(notification);
+
+                // Remove after 3 seconds
+                setTimeout(() => {{
+                    notification.style.opacity = '0';
+                    notification.style.transform = 'translateX(100%)';
+                    setTimeout(() => notification.remove(), 300);
+                }}, 3000);
+            }}
+            </script>
+
+            <style>
+            @keyframes slideIn {{
+                from {{ transform: translateX(100%); opacity: 0; }}
+                to {{ transform: translateX(0); opacity: 1; }}
+            }}
+            </style>
         """

@@ -446,6 +446,8 @@ class ModularWebServer:
                             type_id = path_parts[4]
                             if path.endswith('/toggle'):
                                 self._handle_toggle_analysis_type(type_id)
+                            elif path.endswith('/update'):
+                                self._handle_update_analysis_type(type_id, data)
                             else:
                                 self._send_error_response(404, "API endpoint not found")
                         else:
@@ -2038,6 +2040,79 @@ class ModularWebServer:
                     self._send_json_response({'status': 'success'})
 
                 except Exception as e:
+                    self._send_json_response({
+                        'status': 'error',
+                        'error': str(e)
+                    })
+
+            def _handle_update_analysis_type(self, type_id: str, config: Dict[str, Any]):
+                """Update an existing AI analysis type."""
+                try:
+                    # Get the existing type to check if it's built-in
+                    types = web_server.ai_analysis_service.get_analysis_types(active_only=False)
+                    existing_type = next((t for t in types if t['id'] == int(type_id)), None)
+
+                    if not existing_type:
+                        self._send_json_response({
+                            'status': 'error',
+                            'error': 'Analysis type not found'
+                        })
+                        return
+
+                    if existing_type.get('is_builtin'):
+                        self._send_json_response({
+                            'status': 'error',
+                            'error': 'Cannot edit built-in analysis types'
+                        })
+                        return
+
+                    # Update the analysis type
+                    with web_server.db._get_connection() as conn:
+                        cursor = conn.cursor()
+
+                        # Build update query dynamically
+                        update_fields = []
+                        values = []
+
+                        # Update allowed fields
+                        allowed_fields = ['display_name', 'description', 'prompt_template',
+                                        'icon', 'min_messages', 'max_hours',
+                                        'requires_group', 'requires_sender']
+
+                        for field in allowed_fields:
+                            if field in config:
+                                # Map frontend field names to database columns
+                                db_field = field
+                                if field == 'max_hours':
+                                    db_field = 'default_hours'
+
+                                update_fields.append(f"{db_field} = ?")
+                                values.append(config[field])
+
+                        if update_fields:
+                            values.append(int(type_id))
+                            query = f"""UPDATE ai_analysis_types
+                                      SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP
+                                      WHERE id = ? AND is_builtin = 0"""
+
+                            cursor.execute(query, values)
+                            conn.commit()
+
+                            if cursor.rowcount > 0:
+                                self._send_json_response({'status': 'success'})
+                            else:
+                                self._send_json_response({
+                                    'status': 'error',
+                                    'error': 'Failed to update analysis type'
+                                })
+                        else:
+                            self._send_json_response({
+                                'status': 'error',
+                                'error': 'No fields to update'
+                            })
+
+                except Exception as e:
+                    logging.error(f"Error updating analysis type: {e}")
                     self._send_json_response({
                         'status': 'error',
                         'error': str(e)
