@@ -90,7 +90,7 @@ pip install -r requirements.txt
 
 4. **Install Signal CLI**:
 ```bash
-./manage.sh install-signal
+./manage.sh install-signal-cli
 # Or use the standalone installer:
 # ./install_signal_cli.sh
 ```
@@ -278,7 +278,7 @@ See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for guidelines.
 
 1. **Signal CLI not found**
    ```bash
-   ./manage.sh install-signal
+   ./manage.sh install-signal-cli
    export PATH=$PATH:/usr/local/bin
    ```
 
