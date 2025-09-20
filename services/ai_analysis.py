@@ -177,11 +177,15 @@ class AIAnalysisService:
 
             if result['success']:
                 self.logger.info(f"Analysis completed using {result.get('provider', 'unknown')} provider")
+
+                # Convert markdown to HTML
+                converted_result = self._convert_markdown_to_html(result['response'])
+
                 return {
                     'status': 'success',
                     'analysis_type': config['name'],
                     'display_name': config['display_name'],
-                    'result': result['response'],
+                    'result': converted_result,
                     'group_name': group_name,
                     'hours': hours,
                     'message_count': len(messages),
@@ -255,6 +259,48 @@ class AIAnalysisService:
                 formatted.append(f"[{timestamp}] {text}")
 
         return "\n".join(formatted)
+
+    def _convert_markdown_to_html(self, text: str) -> str:
+        """Convert markdown text to HTML using Python markdown library."""
+        if not text:
+            return text
+
+        try:
+            # Try to import markdown library
+            import markdown
+            # Configure markdown with useful extensions
+            md = markdown.Markdown(extensions=['tables', 'fenced_code', 'nl2br'])
+            return md.convert(text)
+        except ImportError:
+            # Fallback to basic conversion if markdown library not available
+            self.logger.warning("Markdown library not available, using basic conversion")
+            return self._basic_markdown_to_html(text)
+        except Exception as e:
+            # If conversion fails, return original text
+            self.logger.error(f"Markdown conversion failed: {e}")
+            return text
+
+    def _basic_markdown_to_html(self, text: str) -> str:
+        """Basic markdown to HTML conversion as fallback."""
+        if not text:
+            return text
+
+        # Basic conversions
+        html = text
+
+        # Headers
+        html = html.replace('\n### ', '\n<h3>').replace('###', '</h3>')
+        html = html.replace('\n## ', '\n<h2>').replace('##', '</h2>')
+        html = html.replace('\n# ', '\n<h1>').replace('#', '</h1>')
+
+        # Bold and italic
+        html = html.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
+        html = html.replace('*', '<em>', 1).replace('*', '</em>', 1)
+
+        # Line breaks
+        html = html.replace('\n', '<br>\n')
+
+        return html
 
     def save_analysis_type(self, config: Dict[str, Any]) -> bool:
         """

@@ -211,9 +211,9 @@ function renderAnalysisResults(data) {
         }
         html += '</div>';
 
-        // Render the actual result with markdown
+        // Render the actual result (already converted to HTML on server)
         html += '<div class="result-content">';
-        html += SignalBotUtils.markdownToHtml(data.result || 'No result available');
+        html += data.result || 'No result available';
         html += '</div>';
 
         html += '</div>';

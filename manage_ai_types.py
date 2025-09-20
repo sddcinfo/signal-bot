@@ -274,6 +274,59 @@ Format as an executive summary suitable for team leads or managers.""",
     def __init__(self):
         """Initialize the AI Analysis Types Manager."""
         self.db = DatabaseManager()
+        self._ensure_table_exists()
+
+    def _ensure_table_exists(self):
+        """Create the ai_analysis_types table if it doesn't exist."""
+        try:
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Create table with all required columns
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS ai_analysis_types (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL UNIQUE,
+                        display_name TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        prompt_template TEXT NOT NULL,
+                        is_active BOOLEAN DEFAULT 1,
+                        is_builtin BOOLEAN DEFAULT 0,
+                        max_hours INTEGER DEFAULT 24,
+                        min_messages INTEGER DEFAULT 5,
+                        icon TEXT DEFAULT '📝',
+                        color TEXT DEFAULT '#007bff',
+                        show_in_ui BOOLEAN DEFAULT 1,
+                        show_in_api BOOLEAN DEFAULT 1,
+                        requires_auth BOOLEAN DEFAULT 1,
+                        requires_group BOOLEAN DEFAULT 0,
+                        requires_sender BOOLEAN DEFAULT 0,
+                        sort_order INTEGER DEFAULT 100,
+                        max_token_limit INTEGER DEFAULT 4000,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # Add missing columns if table already exists (for backward compatibility)
+                try:
+                    cursor.execute("ALTER TABLE ai_analysis_types ADD COLUMN requires_group BOOLEAN DEFAULT 0")
+                except:
+                    pass  # Column already exists
+
+                try:
+                    cursor.execute("ALTER TABLE ai_analysis_types ADD COLUMN requires_sender BOOLEAN DEFAULT 0")
+                except:
+                    pass  # Column already exists
+
+                try:
+                    cursor.execute("ALTER TABLE ai_analysis_types ADD COLUMN sort_order INTEGER DEFAULT 100")
+                except:
+                    pass  # Column already exists
+
+                conn.commit()
+        except Exception as e:
+            print(f"❌ Error creating ai_analysis_types table: {e}")
 
     def list_types(self, detailed: bool = False) -> List[Dict]:
         """List all AI analysis types."""
