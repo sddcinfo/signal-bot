@@ -12,6 +12,7 @@ import json
 import socket
 import subprocess
 import threading
+import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import signal as signal_module

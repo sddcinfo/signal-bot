@@ -137,7 +137,7 @@ class DaemonMessageProcessor:
                         self.logger.info(f"Found {len(mentions)} mentions in message: {mentions}")
 
                 # Check if message contains mention placeholder but no mentions data
-                if not mentions and '\ufffc' in message_text:
+                if not mentions and message_text and '\ufffc' in message_text:
                     self.logger.debug(f"Message contains mention placeholder but no mentions data found")
 
                 # For sync messages, use the sync_group_info, otherwise get from data_message
