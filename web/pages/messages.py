@@ -3,7 +3,7 @@ Messages page for Signal Bot web interface.
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from urllib.parse import quote
 from ..shared.base_page import BasePage
 from ..shared.filters import GlobalFilterSystem
@@ -249,17 +249,24 @@ class MessagesPage(BasePage):
 
         # Get date range from filters using centralized logic
         # Convert datetime to strings for database
+        date_mode = filters.get('date_mode', 'all')
+
         if filters.get('date'):
             # Specific date selected - use it directly
             start_date = filters['date']
             end_date = filters['date']
-        elif filters.get('hours', 0) > 0:
-            # Use hours filter to calculate date range
+        elif date_mode == 'today' and filters.get('hours', 0) > 0:
+            # For "Today" mode with hours filter: show messages from last X hours
             from datetime import datetime, timedelta
             now = datetime.now()
             start_time = now - timedelta(hours=filters['hours'])
             start_date = start_time.strftime('%Y-%m-%d')
             end_date = now.strftime('%Y-%m-%d')
+        elif date_mode == 'all' and filters.get('hours', 0) > 0:
+            # For "All Time" mode with hours filter: show ALL messages
+            # The hours filter is for display purposes only (hourly charts)
+            start_date = None
+            end_date = None
         else:
             # No date filter - show all
             start_date = None
@@ -303,13 +310,15 @@ class MessagesPage(BasePage):
         # Generate HTML for groups with messages
         for group, message_count in groups_with_messages:
             try:
-                # Generate activity chart for this group
+                # Generate activity chart for this group with same filters as message count
                 activity_chart = self._generate_activity_chart(
                     group.group_id,
                     date_param,
                     sender_filter,
                     attachments_only,
-                    user_timezone
+                    user_timezone,
+                    start_date,
+                    end_date
                 )
 
                 # Build filter parameters for View Messages link
@@ -341,8 +350,10 @@ class MessagesPage(BasePage):
 
         return groups_html
 
-    def _generate_activity_chart(self, group_id: str, date_param: str, sender_filter: str, attachments_only: bool, user_timezone: str) -> str:
-        """Generate activity chart HTML for a specific group."""
+    def _generate_activity_chart(self, group_id: str, date_param: str, sender_filter: str,
+                                attachments_only: bool, user_timezone: str,
+                                start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
+        """Generate activity chart HTML for a specific group using the same filters as message counts."""
         try:
             if date_param:
                 # For specific date, use the hourly counts method
@@ -358,23 +369,25 @@ class MessagesPage(BasePage):
                 for entry in group_data:
                     activity_data[entry['hour']] = entry['message_count']
             else:
-                # For all dates, use filtered message count for each hour
-                # This is a simplified approach - we'll get total counts by hour across all days
+                # For all dates or date ranges, use filtered message count for each hour
+                # Use the same filter builder as get_message_count_filtered for consistency
                 with self.db._get_connection() as conn:
                     cursor = conn.cursor()
 
-                    # Build WHERE conditions
-                    conditions = ["m.group_id = ?"]
-                    params = [group_id]
+                    # Use the centralized filter builder for consistency
+                    where_conditions, params = self.db._build_message_query_filters(
+                        group_id=group_id,
+                        sender_uuid=sender_filter,
+                        start_date=start_date,
+                        end_date=end_date,
+                        user_timezone=user_timezone,
+                        attachments_only=attachments_only,
+                        monitored_only=not group_id  # If no specific group, show only monitored
+                    )
 
-                    if sender_filter:
-                        conditions.append("m.sender_uuid = ?")
-                        params.append(sender_filter)
-
-                    if attachments_only:
-                        conditions.append("EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)")
-
-                    where_clause = "WHERE " + " AND ".join(conditions)
+                    where_clause = ""
+                    if where_conditions:
+                        where_clause = "WHERE " + " AND ".join(where_conditions)
 
                     # Get hourly counts across all days with timezone conversion
                     try:
@@ -475,21 +488,41 @@ class MessagesPage(BasePage):
         # Get user timezone for filtering
         user_timezone = self.get_user_timezone(query)
 
+        # Calculate date range from filters - same logic as groups tab
+        date_mode = filters.get('date_mode', 'all')
+
+        if filters.get('date'):
+            # Specific date selected - use it directly
+            start_date = filters['date']
+            end_date = filters['date']
+        elif date_mode == 'today' and filters.get('hours', 0) > 0:
+            # For "Today" mode with hours filter: show messages from last X hours
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            start_time = now - timedelta(hours=filters['hours'])
+            start_date = start_time.strftime('%Y-%m-%d')
+            end_date = now.strftime('%Y-%m-%d')
+        elif date_mode == 'all' and filters.get('hours', 0) > 0:
+            # For "All Time" mode with hours filter: show ALL messages
+            # The hours filter is for display purposes only (hourly charts)
+            start_date = None
+            end_date = None
+        else:
+            # No date filter - show all
+            start_date = None
+            end_date = None
+
         # Get sender statistics across all monitored groups
         try:
             with self.db._get_connection() as conn:
                 cursor = conn.cursor()
-
-                # Use the centralized filter builder for consistency with All Messages tab
-                # Convert date_param to proper format for the centralized method
-                start_date = date_param if date_param and date_param.strip() else None
 
                 # Use centralized filter builder (same as All Messages tab)
                 where_conditions, params = self.db._build_message_query_filters(
                     group_id=group_filter,
                     sender_uuid=sender_filter,
                     start_date=start_date,
-                    end_date=start_date,  # For single date filtering
+                    end_date=end_date,  # Use the actual end_date, not start_date
                     user_timezone=user_timezone,
                     attachments_only=attachments_only,
                     monitored_only=not group_filter  # If no specific group, show only monitored
@@ -562,13 +595,15 @@ class MessagesPage(BasePage):
                 first_msg = self.format_timestamp(sender['first_message'], user_timezone)
                 last_msg = self.format_timestamp(sender['last_message'], user_timezone)
 
-                # Generate activity chart for this sender
+                # Generate activity chart for this sender with same date filters
                 activity_chart = self._generate_sender_activity_chart(
                     sender_uuid,
                     date_param,
                     group_filter,
                     attachments_only,
-                    user_timezone
+                    user_timezone,
+                    start_date,
+                    end_date
                 )
 
                 # Build filter parameters for View Messages link
@@ -604,8 +639,10 @@ class MessagesPage(BasePage):
 
         return senders_html
 
-    def _generate_sender_activity_chart(self, sender_uuid: str, date_param: str, group_filter: str, attachments_only: bool, user_timezone: str) -> str:
-        """Generate activity chart HTML for a specific sender."""
+    def _generate_sender_activity_chart(self, sender_uuid: str, date_param: str, group_filter: str,
+                                       attachments_only: bool, user_timezone: str,
+                                       start_date: Optional[str] = None, end_date: Optional[str] = None) -> str:
+        """Generate activity chart HTML for a specific sender using the same filters as message counts."""
         try:
             if date_param:
                 # For specific date, get hourly counts for this sender
@@ -671,22 +708,25 @@ class MessagesPage(BasePage):
                     for row in cursor.fetchall():
                         activity_data[row['hour']] = row['message_count']
             else:
-                # For all dates, use the same logic as groups but for sender
+                # For all dates or date ranges, use the same logic as groups but for sender
+                # Use the same filter builder as get_message_count_filtered for consistency
                 with self.db._get_connection() as conn:
                     cursor = conn.cursor()
 
-                    # Build WHERE conditions
-                    conditions = ["m.sender_uuid = ?"]
-                    params = [sender_uuid]
+                    # Use the centralized filter builder for consistency
+                    where_conditions, params = self.db._build_message_query_filters(
+                        group_id=group_filter,
+                        sender_uuid=sender_uuid,
+                        start_date=start_date,
+                        end_date=end_date,
+                        user_timezone=user_timezone,
+                        attachments_only=attachments_only,
+                        monitored_only=not group_filter  # If no specific group, show only monitored
+                    )
 
-                    if group_filter:
-                        conditions.append("m.group_id = ?")
-                        params.append(group_filter)
-
-                    if attachments_only:
-                        conditions.append("EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)")
-
-                    where_clause = "WHERE " + " AND ".join(conditions)
+                    where_clause = ""
+                    if where_conditions:
+                        where_clause = "WHERE " + " AND ".join(where_conditions)
 
                     # Get hourly counts across all days with timezone conversion
                     try:
@@ -781,17 +821,25 @@ class MessagesPage(BasePage):
 
         # Get date range from filters using centralized logic
         # Convert datetime to strings for database
+        date_mode = filters.get('date_mode', 'all')
+
         if filters.get('date'):
             # Specific date selected - use it directly
             start_date = filters['date']
             end_date = filters['date']
-        elif filters.get('hours', 0) > 0:
-            # Use hours filter to calculate date range
+        elif date_mode == 'today' and filters.get('hours', 0) > 0:
+            # For "Today" mode with hours filter: show messages from last X hours
             from datetime import datetime, timedelta
             now = datetime.now()
             start_time = now - timedelta(hours=filters['hours'])
             start_date = start_time.strftime('%Y-%m-%d')
             end_date = now.strftime('%Y-%m-%d')
+        elif date_mode == 'all' and filters.get('hours', 0) > 0:
+            # For "All Time" mode with hours filter: this should show ALL messages
+            # The hours filter will be applied differently (e.g., for hourly charts)
+            # but NOT for limiting the message date range
+            start_date = None
+            end_date = None
         else:
             # No date filter - show all
             start_date = None
@@ -868,8 +916,11 @@ class MessagesPage(BasePage):
                             # Display sticker (stickers are usually WebP images)
                             # Use sticker_id if attachment_id is not available
                             display_id = attachment_id or sticker_id
-                            if display_id and attachment.get('file_data'):
-                                attachments_html += f'<img src="/attachment/{display_id}" alt="Sticker" class="attachment-sticker" style="max-width: 150px; max-height: 150px; margin: 5px;">'
+                            if display_id:
+                                # Try to display as image - the server will check if file_data exists
+                                attachments_html += f'<img src="/attachment/{display_id}" alt="Sticker" class="attachment-sticker" style="max-width: 150px; max-height: 150px; margin: 5px;" onerror="this.style.display=\'none\'; this.nextElementSibling.style.display=\'inline-block\';">'
+                                # Fallback display if image fails to load
+                                attachments_html += f'<div class="attachment-sticker" style="padding: 10px; background: #f0f0f0; border-radius: 8px; margin: 5px; display: none;">🎭 Sticker</div>'
                             else:
                                 attachments_html += f'<div class="attachment-sticker" style="padding: 10px; background: #f0f0f0; border-radius: 8px; margin: 5px; display: inline-block;">🎭 Sticker</div>'
                         elif attachment_id and content_type and content_type.startswith('image/'):
@@ -964,46 +1015,78 @@ class MessagesPage(BasePage):
 
     def _process_mentions(self, message_text: str, message_id: int = None) -> str:
         """Process mention placeholders in message text with actual user names."""
-        if not message_text or not message_id:
+        if not message_text:
             return message_text
+
+        # Check for mention placeholder first
+        mention_placeholder = '\ufffc'  # Unicode object replacement character
+        if mention_placeholder not in message_text:
+            return message_text
+
+        if not message_id:
+            # No message ID, use fallback replacement
+            return message_text.replace(
+                mention_placeholder,
+                '<span class="mention">@mention</span>'
+            )
 
         # Get mentions for this message
         mentions = self.db.get_message_mentions(message_id)
         if not mentions:
             # Fallback to generic replacement
-            mention_placeholder = '\ufffc'  # Unicode object replacement character
-            if mention_placeholder in message_text:
-                message_text = message_text.replace(
-                    mention_placeholder,
-                    '<span class="mention">@mention</span>'
-                )
-            return message_text
+            return message_text.replace(
+                mention_placeholder,
+                '<span class="mention">@mention</span>'
+            )
 
-        # Sort mentions by position (reverse order to avoid position shifting)
-        mentions.sort(key=lambda m: m['mention_start'], reverse=True)
+        # Process text with placeholder replacement approach
+        # Since mentions use the object replacement character, we'll replace them in order
+        processed_text = message_text
 
-        # Replace each mention with actual user name
+        # Create a mapping of positions to user names
+        mention_replacements = []
         for mention in mentions:
-            start = mention['mention_start']
-            length = mention['mention_length']
-
-            # Get user display name - prefer friendly_name, then phone_number, then truncated UUID
+            # Get user display name - prefer friendly_name, then phone_number, then UUID
             user_name = "unknown"
             if mention.get('friendly_name') and mention['friendly_name'].strip():
                 user_name = mention['friendly_name'].strip()
             elif mention.get('phone_number') and mention['phone_number'].strip():
                 user_name = mention['phone_number'].strip()
             elif mention.get('uuid'):
-                user_name = mention['uuid']
+                # Show first 8 chars of UUID if that's all we have
+                user_name = mention['uuid'][:8] if len(mention['uuid']) > 8 else mention['uuid']
 
-            # Replace the mention placeholder at the specific position
-            if start + length <= len(message_text):
-                before = message_text[:start]
-                after = message_text[start + length:]
-                mention_html = f'<span class="mention">@{user_name}</span>'
-                message_text = before + mention_html + after
+            mention_replacements.append({
+                'start': mention['mention_start'],
+                'length': mention['mention_length'],
+                'name': user_name
+            })
 
-        return message_text
+        # Sort by position (reverse to maintain positions)
+        mention_replacements.sort(key=lambda m: m['start'], reverse=True)
+
+        # Replace each mention
+        for replacement in mention_replacements:
+            start = replacement['start']
+            length = replacement['length']
+
+            # Ensure we're within bounds
+            if start < len(processed_text) and start + length <= len(processed_text):
+                # Check if there's a placeholder at this position
+                if processed_text[start:start + length] == mention_placeholder:
+                    before = processed_text[:start]
+                    after = processed_text[start + length:]
+                    mention_html = f'<span class="mention">@{replacement["name"]}</span>'
+                    processed_text = before + mention_html + after
+
+        # Final fallback - replace any remaining placeholders
+        if mention_placeholder in processed_text:
+            processed_text = processed_text.replace(
+                mention_placeholder,
+                '<span class="mention">@mention</span>'
+            )
+
+        return processed_text
 
     def _render_ai_analysis_tab(self, query: Dict[str, Any]) -> str:
         """Render the unified AI Analysis tab content."""

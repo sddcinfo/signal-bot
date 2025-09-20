@@ -976,6 +976,208 @@ def render_page(title: str, subtitle: str, content: str, active_page: str = '', 
         """
 
 
+def get_emoji_list() -> list:
+    """Get the standard list of emojis used across the application."""
+    return [
+        '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
+        '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
+        '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪',
+        '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨',
+        '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥',
+        '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢',
+        '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠',
+        '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️',
+        '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨',
+        '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞',
+        '😓', '😩', '😫', '🥱', '😤', '😡', '😠', '🤬',
+        '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙',
+        '👈', '👉', '👆', '👇', '☝️', '✋', '🤚', '🖐',
+        '🖖', '👋', '🤏', '💪', '🦾', '🖕', '✍️', '🙏',
+        '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
+        '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖',
+        '💘', '💝', '💟', '☮️', '✝️', '☪️', '🕉', '☸️',
+        '✡️', '🔯', '🕎', '☯️', '☦️', '🛐', '⛎', '♈',
+        '♉', '♊', '♋', '♌', '♍', '♎', '♏', '♐',
+        # Additional icons useful for AI analysis types
+        '📝', '📊', '📈', '📉', '💬', '🔍', '⚡', '🎨',
+        '🚀', '💯', '⭐', '🔥', '💎', '🏆', '🎉', '📱',
+        '💻', '🖥️', '📷', '🎮', '🎵', '🎬', '📚', '✏️',
+        '🌟', '🌈', '🌙', '☀️', '⛅', '🌊', '🌺', '🌸',
+        '✅', '❌', '⚠️', '📢', '🔔', '🔕', '📣', '📬',
+        '🏷️', '📌', '📍', '🗂️', '📂', '📁', '📋', '📄',
+        '🔒', '🔓', '🔑', '🛡️', '🔧', '🔨', '⚙️', '🛠️',
+        '🤖', '👾', '🦾', '🦿', '🧠', '👁️', '👀', '🎯'
+    ]
+
+
+def get_emoji_grid_html(onclick_function: str = "addEmoji", emoji_class: str = "emoji-item") -> str:
+    """Get the HTML for an emoji grid.
+
+    Args:
+        onclick_function: The JavaScript function to call when an emoji is clicked
+        emoji_class: CSS class for emoji items
+    """
+    emojis = get_emoji_list()
+    return ''.join([
+        f'<div class="{emoji_class}" onclick="{onclick_function}(\'{emoji}\')">{emoji}</div>'
+        for emoji in emojis
+    ])
+
+
+def get_emoji_picker_for_reactions() -> str:
+    """Get the emoji picker specifically for user reactions configuration."""
+    emoji_grid = get_emoji_grid_html(onclick_function="addEmoji", emoji_class="emoji-item")
+
+    return f"""
+        <div id="emojiModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeEmojiPicker()">&times;</span>
+                <h3>Configure Emoji Reactions</h3>
+
+                <div class="form-group">
+                    <label>Reaction Mode:</label>
+                    <select id="reactionMode">
+                        <option value="random">Random</option>
+                        <option value="sequential">Sequential</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Selected Emojis (click to remove):</label>
+                    <div id="selectedEmojis" class="selected-emojis"></div>
+                </div>
+
+                <div class="form-group">
+                    <label>Available Emojis (click to add):</label>
+                    <div class="emoji-grid">
+                        {emoji_grid}
+                    </div>
+                </div>
+
+                <div style="text-align: center; margin-top: 20px;">
+                    <button class="btn" onclick="saveFromModal()">Save Reactions</button>
+                    <button class="btn btn-secondary" onclick="closeEmojiPicker()">Cancel</button>
+                </div>
+
+                <input type="hidden" id="currentUserId" value="">
+            </div>
+        </div>
+    """
+
+
+def get_emoji_picker_for_icon_input() -> str:
+    """Get reusable emoji picker component for single icon selection."""
+    emoji_grid = get_emoji_grid_html(onclick_function="selectIconEmoji", emoji_class="emoji-picker-item")
+
+    return f"""
+        <style>
+            .icon-emoji-modal {{
+                display: none;
+                position: fixed;
+                z-index: 2000;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0, 0, 0, 0.4);
+            }}
+            .icon-emoji-modal-content {{
+                background-color: #fefefe;
+                margin: 5% auto;
+                padding: 20px;
+                border: 1px solid #888;
+                border-radius: 15px;
+                width: 90%;
+                max-width: 800px;  /* Increased from 600px to accommodate emoji grid */
+                max-height: 80vh;
+                overflow-y: auto;
+                overflow-x: hidden;  /* Prevent horizontal scroll */
+                box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            }}
+            .icon-emoji-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+            }}
+            .icon-emoji-grid {{
+                display: grid;
+                grid-template-columns: repeat(10, 1fr);
+                gap: 8px;
+                padding: 15px;
+                background: #f8f9fa;
+                border-radius: 10px;
+            }}
+            .emoji-picker-item {{
+                font-size: 24px;  /* Slightly smaller to fit better */
+                text-align: center;
+                padding: 8px;  /* Slightly less padding */
+                cursor: pointer;
+                border-radius: 8px;
+                transition: all 0.2s ease;
+                background: white;
+                border: 1px solid #e9ecef;
+                min-width: 40px;  /* Ensure minimum width */
+            }}
+            .emoji-picker-item:hover {{
+                background-color: #667eea;
+                transform: scale(1.1);
+                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+            }}
+            .icon-emoji-close {{
+                color: #aaa;
+                font-size: 32px;
+                font-weight: bold;
+                cursor: pointer;
+                line-height: 20px;
+                transition: color 0.2s;
+            }}
+            .icon-emoji-close:hover {{
+                color: #764ba2;
+            }}
+        </style>
+
+        <div id="iconEmojiPickerModal" class="icon-emoji-modal">
+            <div class="icon-emoji-modal-content">
+                <div class="icon-emoji-header">
+                    <h3 style="margin: 0; color: #333;">Select an Icon</h3>
+                    <span class="icon-emoji-close" onclick="closeIconEmojiPicker()">&times;</span>
+                </div>
+                <div class="icon-emoji-grid">
+                    {emoji_grid}
+                </div>
+            </div>
+        </div>
+
+        <script>
+            let currentIconInputId = null;
+
+            function showIconEmojiPicker(inputId) {{
+                currentIconInputId = inputId;
+                document.getElementById('iconEmojiPickerModal').style.display = 'block';
+            }}
+
+            function closeIconEmojiPicker() {{
+                document.getElementById('iconEmojiPickerModal').style.display = 'none';
+            }}
+
+            function selectIconEmoji(emoji) {{
+                if (currentIconInputId) {{
+                    document.getElementById(currentIconInputId).value = emoji;
+                }}
+                closeIconEmojiPicker();
+            }}
+
+            // Close modal when clicking outside
+            window.onclick = function(event) {{
+                const modal = document.getElementById('iconEmojiPickerModal');
+                if (event.target == modal) {{
+                    closeIconEmojiPicker();
+                }}
+            }}
+        </script>
+    """
+
 def get_standard_date_selector(input_id: str = "date-input",
                               label_text: str = "Select Date:",
                               button_text: str = "Load Data",

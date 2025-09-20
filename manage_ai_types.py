@@ -407,8 +407,11 @@ Format as an executive summary suitable for team leads or managers.""",
                 update_fields = []
                 values = []
 
+                # Include all editable fields
                 for field in ['name', 'display_name', 'description', 'prompt_template',
-                            'is_active', 'max_hours', 'min_messages', 'icon', 'color']:
+                            'is_active', 'max_hours', 'min_messages', 'icon', 'color',
+                            'requires_group', 'requires_sender', 'sort_order',
+                            'anonymize_external', 'include_sender_names']:
                     if field in type_data:
                         update_fields.append(f"{field} = ?")
                         values.append(type_data[field])
@@ -416,6 +419,9 @@ Format as an executive summary suitable for team leads or managers.""",
                 if not update_fields:
                     print("❌ No fields to update")
                     return False
+
+                # Add updated_at timestamp
+                update_fields.append("updated_at = CURRENT_TIMESTAMP")
 
                 values.append(type_id)
                 query = f"UPDATE ai_analysis_types SET {', '.join(update_fields)} WHERE id = ?"
@@ -646,8 +652,8 @@ def main():
         manager.interactive_add()
 
     elif args.command == 'edit':
-        # Interactive edit
-        types = manager.list_types()
+        # Interactive edit - get detailed info including prompt_template
+        types = manager.list_types(detailed=True)
         type_info = next((t for t in types if t['id'] == args.id), None)
 
         if not type_info:
@@ -659,14 +665,46 @@ def main():
 
         updates = {}
 
+        # Edit display name
         new_name = input(f"Display name [{type_info['display_name']}]: ").strip()
         if new_name:
             updates['display_name'] = new_name
 
+        # Edit description
         new_desc = input(f"Description [{type_info['description'][:50]}...]: ").strip()
         if new_desc:
             updates['description'] = new_desc
 
+        # Edit prompt template - show first 100 chars as preview
+        print(f"\nCurrent prompt template (first 100 chars):")
+        print(f"  {type_info['prompt_template'][:100]}...")
+        print("\nEnter new prompt template (or press Enter to keep current):")
+        print("(Type 'MULTILINE' to enter multi-line mode, end with '###' on its own line)")
+
+        prompt_input = input().strip()
+        if prompt_input:
+            if prompt_input == 'MULTILINE':
+                print("Enter prompt template (end with '###' on its own line):")
+                lines = []
+                while True:
+                    line = input()
+                    if line == '###':
+                        break
+                    lines.append(line)
+                updates['prompt_template'] = '\n'.join(lines)
+            else:
+                updates['prompt_template'] = prompt_input
+
+        # Edit configuration fields
+        new_max_hours = input(f"Max hours to look back [{type_info.get('max_hours', 168)}]: ").strip()
+        if new_max_hours:
+            updates['max_hours'] = int(new_max_hours)
+
+        new_min_messages = input(f"Minimum messages required [{type_info.get('min_messages', 5)}]: ").strip()
+        if new_min_messages:
+            updates['min_messages'] = int(new_min_messages)
+
+        # Edit display fields
         new_icon = input(f"Icon [{type_info['icon']}]: ").strip()
         if new_icon:
             updates['icon'] = new_icon
@@ -674,6 +712,11 @@ def main():
         new_color = input(f"Color [{type_info['color']}]: ").strip()
         if new_color:
             updates['color'] = new_color
+
+        # Edit boolean flags
+        new_active = input(f"Is active (1/0) [{type_info.get('is_active', 1)}]: ").strip()
+        if new_active:
+            updates['is_active'] = int(new_active)
 
         if updates:
             manager.edit_type(args.id, updates)

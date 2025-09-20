@@ -78,6 +78,59 @@ class AIAnalysisService:
             self.logger.error(f"Error getting analysis types: {e}")
             return []
 
+    def get_analysis_type_by_id(self, type_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific AI analysis type by ID with all fields including prompt_template.
+
+        Args:
+            type_id: ID of the analysis type
+
+        Returns:
+            Dictionary with all type details or None if not found
+        """
+        try:
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+                query = """
+                    SELECT id, name, display_name, description, prompt_template, icon, color,
+                           requires_group, requires_sender, max_hours, min_messages,
+                           sort_order, anonymize_external, include_sender_names,
+                           is_active, is_builtin, created_at, updated_at
+                    FROM ai_analysis_types
+                    WHERE id = ?
+                """
+
+                cursor.execute(query, (type_id,))
+                row = cursor.fetchone()
+
+                if row:
+                    return {
+                        'id': row['id'],
+                        'name': row['name'],
+                        'display_name': row['display_name'],
+                        'description': row['description'],
+                        'prompt_template': row['prompt_template'],
+                        'icon': row['icon'],
+                        'color': row['color'],
+                        'requires_group': bool(row['requires_group']),
+                        'requires_sender': bool(row['requires_sender']),
+                        'max_hours': row['max_hours'],
+                        'min_messages': row['min_messages'],
+                        'sort_order': row['sort_order'],
+                        'anonymize_external': bool(row['anonymize_external']),
+                        'include_sender_names': bool(row['include_sender_names']),
+                        'is_active': bool(row['is_active']),
+                        'is_builtin': bool(row['is_builtin']),
+                        'created_at': row['created_at'],
+                        'updated_at': row['updated_at']
+                    }
+
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Error getting analysis type by ID: {e}")
+            return None
+
     def get_analysis_config(self, analysis_type: str) -> Optional[Dict[str, Any]]:
         """
         Get configuration for a specific analysis type.
@@ -383,6 +436,55 @@ class AIAnalysisService:
 
         except Exception as e:
             self.logger.error(f"Error saving analysis type: {e}")
+            return False
+
+    def update_analysis_type(self, type_id: int, update_fields: Dict[str, Any]) -> bool:
+        """
+        Update an AI analysis type.
+
+        Args:
+            type_id: ID of the analysis type to update
+            update_fields: Dictionary of fields to update
+
+        Returns:
+            True if successful
+        """
+        try:
+            with self.db._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # Build update query dynamically based on provided fields
+                set_clauses = []
+                values = []
+
+                for field, value in update_fields.items():
+                    set_clauses.append(f"{field} = ?")
+                    values.append(value)
+
+                if not set_clauses:
+                    self.logger.warning("No fields to update")
+                    return False
+
+                # Add updated_at timestamp
+                set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+
+                # Add type_id for WHERE clause
+                values.append(type_id)
+
+                query = f"UPDATE ai_analysis_types SET {', '.join(set_clauses)} WHERE id = ?"
+
+                cursor.execute(query, values)
+                conn.commit()
+
+                if cursor.rowcount > 0:
+                    self.logger.info(f"Successfully updated analysis type ID {type_id}")
+                    return True
+                else:
+                    self.logger.warning(f"Analysis type ID {type_id} not found")
+                    return False
+
+        except Exception as e:
+            self.logger.error(f"Error updating analysis type: {e}")
             return False
 
     def delete_analysis_type(self, type_id: int) -> bool:

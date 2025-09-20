@@ -30,7 +30,7 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
-    def generate_response(self, prompt: str, timeout: int = 60) -> Dict[str, Any]:
+    def generate_response(self, prompt: str, timeout: int = 180) -> Dict[str, Any]:
         """
         Generate a response from the AI provider.
 
@@ -73,7 +73,7 @@ class GeminiProvider(AIProvider):
         except Exception:
             return False
 
-    def generate_response(self, prompt: str, timeout: int = 60) -> Dict[str, Any]:
+    def generate_response(self, prompt: str, timeout: int = 180) -> Dict[str, Any]:
         """Generate response using Gemini CLI."""
         try:
             result = subprocess.run(
@@ -193,12 +193,12 @@ class OllamaProvider(AIProvider):
             self.logger.debug(f"Failed to check loaded models: {e}")
             return False
 
-    def ensure_model_loaded(self, timeout: int = 30) -> bool:
+    def ensure_model_loaded(self, timeout: int = 60) -> bool:
         """Check if the model is loaded and ready for inference."""
         # Just check if model is already loaded (fast check)
         return self.is_model_loaded()
 
-    def generate_response(self, prompt: str, timeout: int = 60) -> Dict[str, Any]:
+    def generate_response(self, prompt: str, timeout: int = 180) -> Dict[str, Any]:
         """Generate response using Ollama API with intelligent model loading."""
         max_retries = 3
         retry_delay = 15  # seconds - longer delay for model loading
@@ -385,7 +385,7 @@ class OllamaProvider(AIProvider):
             self.logger.debug(f"Failed to get loaded models: {e}")
             return []
 
-    def preload_model(self, timeout: int = 60) -> Dict[str, Any]:
+    def preload_model(self, timeout: int = 180) -> Dict[str, Any]:
         """Preload the model to ensure it's ready for inference."""
         self.logger.info(f"Preloading model {self.model}...")
 
@@ -516,7 +516,7 @@ class AIProviderManager:
         self.logger.warning("No AI providers are available")
         return None
 
-    def generate_response(self, prompt: str, timeout: int = 60) -> Dict[str, Any]:
+    def generate_response(self, prompt: str, timeout: int = 180) -> Dict[str, Any]:
         """Generate response using the first available provider."""
         provider = self.get_available_provider()
 
@@ -625,7 +625,7 @@ def get_ai_manager():
     return ai_manager
 
 
-def get_ai_response(prompt: str, timeout: int = 60) -> Dict[str, Any]:
+def get_ai_response(prompt: str, timeout: int = 180) -> Dict[str, Any]:
     """
     Convenience function to get AI response using the global manager.
 

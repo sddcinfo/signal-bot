@@ -1,0 +1,54 @@
+[
+  {
+    "id": 4,
+    "name": "highlights",
+    "display_name": "Daily Highlights",
+    "description": "Extract the most important or interesting moments",
+    "is_active": true,
+    "is_builtin": true,
+    "max_hours": 168,
+    "min_messages": 5,
+    "icon": "\u2b50",
+    "color": "#007bff",
+    "prompt_template": "Extract the highlights and key moments from {group_name} conversation.\n\nTime Period: Last {hours} hours\nMessage Count: {message_count}\n\nMessages:\n{messages}\n\nPlease identify:\n\n1. **Key Announcements**: Important news or updates shared\n2. **Decisions Made**: Any group decisions or conclusions reached\n3. **Questions & Answers**: Important Q&As that others might find useful\n4. **Memorable Quotes**: Interesting, funny, or insightful messages\n5. **Links & Resources**: Useful links or resources shared\n6. **Achievements**: Any celebrations or accomplishments mentioned\n\nFormat as a bulletin-style list that could be shared as a daily digest."
+  },
+  {
+    "id": 2,
+    "name": "sentiment",
+    "display_name": "Sentiment Analysis",
+    "description": "Analyze the emotional tone and mood of conversations",
+    "is_active": true,
+    "is_builtin": true,
+    "max_hours": 168,
+    "min_messages": 5,
+    "icon": "\ud83d\ude0a",
+    "color": "#007bff",
+    "prompt_template": "Analyze the sentiment and emotional tone of the following chat conversation from {group_name}.\n\nTime Period: Last {hours} hours\nMessage Count: {message_count}\n\nMessages:\n{messages}\n\nPlease provide a sentiment analysis including:\n\n1. **Overall Sentiment Score**: Rate from -10 (very negative) to +10 (very positive)\n2. **Emotional Themes**: What emotions are most prevalent?\n3. **Sentiment Breakdown**:\n   - Positive moments and their triggers\n   - Negative moments and their causes\n   - Neutral discussions\n4. **Participant Dynamics**: How are different participants contributing to the mood?\n5. **Trend**: Is the sentiment improving, declining, or stable?\n6. **Recommendations**: Any suggestions for improving group dynamics?\n\nFormat your response with clear sections and specific examples from the conversation."
+  },
+  {
+    "id": 1,
+    "name": "summary",
+    "display_name": "Message Summary",
+    "description": "Comprehensive summary of conversation topics and key points",
+    "is_active": true,
+    "is_builtin": true,
+    "max_hours": 168,
+    "min_messages": 5,
+    "icon": "\ud83d\udcdd",
+    "color": "#007bff",
+    "prompt_template": "Analyze the following chat conversation from the last {hours} hours and provide a comprehensive summary.\n\nGroup: {group_name}\nTime Period: Last {hours} hours\nMessage Count: {message_count}\n\nChat Messages:\n{messages}\n\nPlease provide a structured summary including:\n1. **Key Topics Discussed**: Main subjects and themes of conversation\n2. **Important Information**: Any decisions, announcements, or critical details\n3. **Action Items**: Any tasks, commitments, or follow-ups mentioned\n4. **Overall Activity**: General conversation patterns and flow\n5. **Tone & Sentiment**: Overall mood and energy of the conversation\n6. **Notable Moments**: Interesting, funny, or significant exchanges\n\nFormat the response as clear, concise bullet points under each section.\nIf a section has no relevant content, you can skip it.\nKeep the summary focused on what would be most useful for someone who missed the conversation."
+  },
+  {
+    "id": 3,
+    "name": "topics",
+    "display_name": "Topic Extraction",
+    "description": "Extract and categorize main discussion topics",
+    "is_active": true,
+    "is_builtin": true,
+    "max_hours": 168,
+    "min_messages": 5,
+    "icon": "\ud83c\udff7\ufe0f",
+    "color": "#007bff",
+    "prompt_template": "Extract and categorize the main topics from this conversation in {group_name}.\n\nTime Period: Last {hours} hours\nMessage Count: {message_count}\n\nMessages:\n{messages}\n\nPlease identify and categorize:\n\n1. **Primary Topics** (most discussed):\n   - List each topic with approximate message count\n   - Key participants for each topic\n\n2. **Secondary Topics** (briefly mentioned):\n   - Quick mentions or side discussions\n\n3. **Topic Flow**:\n   - How did the conversation transition between topics?\n   - Any recurring themes?\n\n4. **Topic Categories**:\n   - Work/Professional\n   - Personal/Social\n   - Technical/Support\n   - Planning/Logistics\n   - Other\n\n5. **Actionable Topics**:\n   - Topics requiring follow-up\n   - Unresolved discussions\n\nProvide a clear, organized breakdown of the conversation topics."
+  }
+]

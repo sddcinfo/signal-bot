@@ -142,7 +142,7 @@ function markdownToHtml(text) {
 // Poll for async job status
 function pollJobStatus(jobId, endpoint, onSuccess, onError, onProgress) {
     const startTime = Date.now();
-    const maxDuration = 60000; // 60 seconds timeout
+    const maxDuration = 180000; // 3 minutes timeout
 
     function checkStatus() {
         const url = endpoint + '?job_id=' + jobId;
@@ -167,7 +167,14 @@ function pollJobStatus(jobId, endpoint, onSuccess, onError, onProgress) {
                 }
             })
             .catch(error => {
-                if (onError) onError('Failed to check status: ' + error);
+                const elapsed = Date.now() - startTime;
+                // Retry on fetch errors if we haven't exceeded the timeout
+                if (elapsed < maxDuration) {
+                    console.log('Retrying after fetch error:', error);
+                    setTimeout(checkStatus, 3000); // Retry after 3 seconds
+                } else {
+                    if (onError) onError('Failed to check status: ' + error);
+                }
             });
     }
 

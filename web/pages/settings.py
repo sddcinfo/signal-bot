@@ -4,6 +4,7 @@ Settings page - consolidated settings with tabbed interface.
 
 from typing import Dict, Any
 from ..shared.base_page import BasePage
+from ..shared.templates import get_emoji_picker_for_icon_input
 from services.ai_provider import get_ai_status, save_ai_configuration
 
 
@@ -453,9 +454,143 @@ class SettingsPage(BasePage):
                 }
             }
 
-            function editAnalysisType(id) {
-                // TODO: Implement edit functionality
-                alert('Edit functionality coming soon!');
+            async function fetchAnalysisTypes() {
+                // Helper function to fetch analysis types
+                try {
+                    const response = await fetch('/api/ai-analysis/types');
+                    const data = await response.json();
+                    if (data.status === 'success' && data.types) {
+                        return data.types;
+                    }
+                    return [];
+                } catch (error) {
+                    console.error('Error fetching analysis types:', error);
+                    return [];
+                }
+            }
+
+            async function editAnalysisType(id) {
+                try {
+                    // First get the basic type data
+                    const types = await fetchAnalysisTypes();
+                    const basicType = types.find(t => t.id === id);
+                    if (!basicType) {
+                        alert('Analysis type not found');
+                        return;
+                    }
+
+                    // Get the full type data including prompt_template
+                    const response = await fetch(`/api/ai-analysis/type/${id}`);
+                    const fullType = await response.json();
+
+                    // Merge the data, using full type data when available
+                    const type = fullType.id ? fullType : basicType;
+
+                    // Create edit modal HTML
+                    const modalHTML = `
+                        <div id="edit-modal-${id}" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center;">
+                            <div style="background: white; border-radius: 8px; padding: 20px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;">
+                                <h3>Edit Analysis Type: ${type.display_name}</h3>
+                                <form id="edit-form-${id}">
+                                    <div style="margin-bottom: 15px;">
+                                        <label>Display Name:</label>
+                                        <input type="text" id="edit-display-name-${id}" value="${type.display_name}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                                    </div>
+                                    <div style="margin-bottom: 15px;">
+                                        <label>Description:</label>
+                                        <textarea id="edit-description-${id}" rows="3" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">${type.description || ''}</textarea>
+                                    </div>
+                                    <div style="margin-bottom: 15px;">
+                                        <label>Prompt Template:</label>
+                                        <textarea id="edit-prompt-${id}" rows="8" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace;">${type.prompt_template || ''}</textarea>
+                                        <small style="color: #666;">Use placeholders: {group_name}, {hours}, {messages}, {message_count}</small>
+                                    </div>
+                                    <div style="margin-bottom: 15px;">
+                                        <label>Icon:</label>
+                                        <div style="display: flex; gap: 10px;">
+                                            <input type="text" id="edit-icon-${id}" value="${type.icon || '🤖'}" readonly style="width: 60px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; text-align: center; font-size: 24px;">
+                                            <button type="button" onclick="showIconEmojiPicker('edit-icon-${id}')" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Select Icon</button>
+                                        </div>
+                                    </div>
+                                    <div style="margin-bottom: 15px;">
+                                        <label>Max Hours:</label>
+                                        <input type="number" id="edit-max-hours-${id}" value="${type.max_hours || 168}" min="1" style="width: 100px; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                                    </div>
+                                    <div style="margin-bottom: 15px;">
+                                        <label>Min Messages:</label>
+                                        <input type="number" id="edit-min-messages-${id}" value="${type.min_messages || 5}" min="0" style="width: 100px; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                                    </div>
+                                    <div style="margin-bottom: 15px;">
+                                        <label>
+                                            <input type="checkbox" id="edit-requires-group-${id}" ${type.requires_group ? 'checked' : ''}>
+                                            Requires Group Selection
+                                        </label>
+                                    </div>
+                                    <div style="margin-bottom: 15px;">
+                                        <label>
+                                            <input type="checkbox" id="edit-requires-sender-${id}" ${type.requires_sender ? 'checked' : ''}>
+                                            Requires Sender Selection
+                                        </label>
+                                    </div>
+                                    <div style="margin-bottom: 15px;">
+                                        <label>
+                                            <input type="checkbox" id="edit-active-${id}" ${type.is_active !== false ? 'checked' : ''}>
+                                            Active
+                                        </label>
+                                    </div>
+                                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                                        <button type="button" onclick="document.getElementById('edit-modal-${id}').remove()" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">Cancel</button>
+                                        <button type="button" onclick="saveEditAnalysisType(${id})" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Changes</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    `;
+
+                    // Add modal to page
+                    document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+                } catch (error) {
+                    alert('Error loading analysis type: ' + error.message);
+                }
+            }
+
+            async function saveEditAnalysisType(id) {
+                const updateData = {
+                    display_name: document.getElementById(`edit-display-name-${id}`).value,
+                    description: document.getElementById(`edit-description-${id}`).value,
+                    prompt_template: document.getElementById(`edit-prompt-${id}`).value,
+                    icon: document.getElementById(`edit-icon-${id}`).value,
+                    max_hours: parseInt(document.getElementById(`edit-max-hours-${id}`).value),
+                    min_messages: parseInt(document.getElementById(`edit-min-messages-${id}`).value),
+                    requires_group: document.getElementById(`edit-requires-group-${id}`).checked,
+                    requires_sender: document.getElementById(`edit-requires-sender-${id}`).checked,
+                    is_active: document.getElementById(`edit-active-${id}`).checked ? 1 : 0
+                };
+
+                if (!updateData.display_name || !updateData.prompt_template) {
+                    alert('Display name and prompt template are required');
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/api/ai-analysis/type/${id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(updateData)
+                    });
+                    const data = await response.json();
+
+                    if (data.status === 'success') {
+                        document.getElementById(`edit-modal-${id}`).remove();
+                        loadAnalysisTypes();
+                        alert('Analysis type updated successfully');
+                    } else {
+                        alert('Error updating analysis type: ' + data.error);
+                    }
+                } catch (error) {
+                    alert('Error: ' + error.message);
+                }
             }
 
             function showAddAnalysisType() {
@@ -614,7 +749,11 @@ class SettingsPage(BasePage):
             </script>
         """ if tab == 'ai-config' else ""
 
+        # Add emoji picker to the page
+        emoji_picker_html = get_emoji_picker_for_icon_input()
+
         return f"""
+            {emoji_picker_html}
             <!-- Tab Navigation -->
             <div class="tabs">
                 <button class="tab-btn {'active' if tab == 'setup' else ''}" onclick="switchTab('setup')">Setup</button>
@@ -784,7 +923,10 @@ class SettingsPage(BasePage):
 
                             <div class="form-group">
                                 <label for="new-type-icon">Icon:</label>
-                                <input type="text" id="new-type-icon" class="form-control" placeholder="e.g., 📊" value="🤖" style="width: 100px;">
+                                <div style="display: flex; gap: 10px; align-items: center;">
+                                    <input type="text" id="new-type-icon" class="form-control" value="🤖" readonly style="width: 60px; text-align: center; font-size: 24px;">
+                                    <button type="button" onclick="showIconEmojiPicker('new-type-icon')" class="btn btn-secondary" style="padding: 6px 12px;">Select Icon</button>
+                                </div>
                             </div>
 
                             <div class="form-group">

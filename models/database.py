@@ -307,12 +307,15 @@ class DatabaseManager:
         with self._lock:
             for attempt in range(max_retries):
                 try:
-                    conn = sqlite3.connect(self.db_path, timeout=10.0)
+                    # Allow connections from multiple threads
+                    conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
                     conn.row_factory = sqlite3.Row
                     # Enable WAL mode for better concurrent access
                     conn.execute('PRAGMA journal_mode=WAL')
                     conn.execute('PRAGMA synchronous=NORMAL')
-                    conn.execute('PRAGMA busy_timeout=10000')
+                    conn.execute('PRAGMA busy_timeout=15000')  # Increased to 15 seconds
+                    conn.execute('PRAGMA cache_size=-32000')  # 32MB cache
+                    conn.execute('PRAGMA temp_store=MEMORY')  # Use memory for temp tables
 
                     try:
                         yield conn
@@ -1596,7 +1599,7 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT id, attachment_id, filename, content_type, file_size,
-                       file_path, file_data, downloaded_at
+                       file_path, file_data, downloaded_at, pack_id, sticker_id
                 FROM attachments
                 WHERE message_id = ?
                 ORDER BY downloaded_at

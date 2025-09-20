@@ -131,6 +131,15 @@ class ModularWebServer:
                         if query:
                             web_server.logger.debug(f"[GET] Query params: {query}")
 
+                    # API endpoint for getting specific analysis type details
+                    if path.startswith('/api/ai-analysis/type/'):
+                        # Extract type ID from path
+                        path_parts = path.split('/')
+                        if len(path_parts) >= 5:
+                            type_id = path_parts[4]
+                            self._handle_get_analysis_type(type_id)
+                            return
+
                     # Route to appropriate handler - all pages now use modular system
                     if path == '/':
                         response = web_server.pages['dashboard'].render(query)
@@ -252,6 +261,31 @@ class ModularWebServer:
 
                 except Exception as e:
                     logging.error(f"POST request handling error: {e}")
+                    self._send_error_response(500, "Internal server error")
+
+            def do_PUT(self):
+                """Handle PUT requests."""
+                try:
+                    parsed_url = urlparse(self.path)
+                    path = parsed_url.path
+
+                    # Read PUT data
+                    content_length = int(self.headers.get('Content-Length', 0))
+                    put_data = self.rfile.read(content_length).decode('utf-8')
+
+                    if path.startswith('/api/ai-analysis/type/'):
+                        # Extract type ID from path
+                        path_parts = path.split('/')
+                        if len(path_parts) >= 5:
+                            type_id = path_parts[4]
+                            self._handle_update_analysis_type(type_id, put_data)
+                        else:
+                            self._send_error_response(404, "API endpoint not found")
+                    else:
+                        self._send_error_response(404, "Endpoint not found")
+
+                except Exception as e:
+                    logging.error(f"PUT request handling error: {e}")
                     self._send_error_response(500, "Internal server error")
 
             def do_DELETE(self):
@@ -471,18 +505,23 @@ class ModularWebServer:
                     # Get attachment data from database using DatabaseManager's context manager
                     with web_server.db._get_connection() as conn:
                         cursor = conn.cursor()
+                        # Try both attachment_id and sticker_id, prioritizing entries with file_data
                         cursor.execute("""
                             SELECT file_data, content_type, filename
                             FROM attachments
-                            WHERE attachment_id = ?
-                        """, (attachment_id,))
+                            WHERE (attachment_id = ? OR sticker_id = ?)
+                            AND file_data IS NOT NULL
+                            ORDER BY id DESC
+                            LIMIT 1
+                        """, (attachment_id, attachment_id))
                         attachment = cursor.fetchone()
 
                     if not attachment:
+                        logging.debug(f"No attachment found for id: {attachment_id}")
                         self._send_error_response(404, "Attachment not found")
                         return
 
-                    file_data = attachment['file_data']
+                    file_data = attachment['file_data'] if attachment else None
                     if not file_data:
                         logging.warning(f"Attachment {attachment_id} has no file data stored")
                         self._send_error_response(404, "Attachment data not found")
@@ -490,6 +529,15 @@ class ModularWebServer:
 
                     # Determine content type
                     content_type = attachment['content_type'] if attachment['content_type'] else 'application/octet-stream'
+                    # For stickers, use image/webp or detect from file data
+                    if content_type == 'sticker':
+                        # Try to detect from file data magic bytes
+                        if file_data[:4] == b'\x89PNG':
+                            content_type = 'image/png'
+                        elif file_data[:4] == b'RIFF' and file_data[8:12] == b'WEBP':
+                            content_type = 'image/webp'
+                        else:
+                            content_type = 'image/webp'  # Default for stickers
 
                     # Send headers
                     self.send_response(200)
@@ -2113,6 +2161,63 @@ class ModularWebServer:
 
                 except Exception as e:
                     logging.error(f"Error updating analysis type: {e}")
+                    self._send_json_response({
+                        'status': 'error',
+                        'error': str(e)
+                    })
+
+            def _handle_get_analysis_type(self, type_id: str):
+                """Get details of a specific AI analysis type."""
+                try:
+                    type_info = web_server.ai_analysis_service.get_analysis_type_by_id(int(type_id))
+                    if type_info:
+                        self._send_json_response(type_info)
+                    else:
+                        self._send_json_response({
+                            'status': 'error',
+                            'error': 'Analysis type not found'
+                        })
+                except Exception as e:
+                    self._send_json_response({
+                        'status': 'error',
+                        'error': str(e)
+                    })
+
+            def _handle_update_analysis_type(self, type_id: str, data_str: str):
+                """Update an AI analysis type."""
+                try:
+                    data = json.loads(data_str) if data_str else {}
+
+                    # Extract update fields from the request
+                    update_fields = {}
+                    allowed_fields = [
+                        'name', 'display_name', 'description', 'prompt_template',
+                        'requires_group', 'requires_sender', 'max_hours', 'min_messages',
+                        'icon', 'color', 'sort_order', 'anonymize_external',
+                        'include_sender_names', 'is_active'
+                    ]
+
+                    for field in allowed_fields:
+                        if field in data:
+                            update_fields[field] = data[field]
+
+                    if not update_fields:
+                        self._send_json_response({
+                            'status': 'error',
+                            'error': 'No fields to update'
+                        })
+                        return
+
+                    # Use AI analysis service to update the type
+                    success = web_server.ai_analysis_service.update_analysis_type(int(type_id), update_fields)
+                    if success:
+                        self._send_json_response({'status': 'success'})
+                    else:
+                        self._send_json_response({
+                            'status': 'error',
+                            'error': 'Failed to update analysis type'
+                        })
+                except Exception as e:
                     self._send_json_response({
                         'status': 'error',
                         'error': str(e)

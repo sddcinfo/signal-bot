@@ -67,7 +67,7 @@ class GlobalFilterSystem:
             (168, "7 days"),
         ]
 
-        selected_hours = selected_hours or 24  # Default to 24 hours
+        selected_hours = selected_hours if selected_hours is not None else 0  # Default to All time (0)
         hours_html = []
         for value, label in hours_options:
             selected = 'selected' if value == selected_hours else ''

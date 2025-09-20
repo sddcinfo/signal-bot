@@ -74,10 +74,11 @@ class DaemonMessageProcessor:
                 # For sync messages, the message content might be in 'message' or we just use the sent message itself
                 data_message = sent_message.get('message') if sent_message else None
 
-                # For sync messages, group info, attachments, and stickers are at the sent message level
+                # For sync messages, group info, attachments, stickers, and mentions are at the sent message level
                 sync_group_info = sent_message.get('groupInfo') or sent_message.get('groupV2') if sent_message else None
                 sync_attachments = sent_message.get('attachments', []) if sent_message else []
                 sync_sticker = sent_message.get('sticker') if sent_message else None
+                sync_mentions = sent_message.get('mentions', []) if sent_message else []
 
                 if sync_group_info:
                     self.logger.debug(f"Sync message group info found: {sync_group_info.get('groupId', 'unknown')}")
@@ -118,8 +119,27 @@ class DaemonMessageProcessor:
                 message_text = data_message
                 group_info = sync_group_info if is_sync_message else None
                 attachments = []
+                mentions = sync_mentions if is_sync_message else []
             else:
+                # Debug: log available keys in data_message
+                if self.logger.level == logging.DEBUG:
+                    self.logger.debug(f"data_message keys: {list(data_message.keys())}")
+
                 message_text = data_message.get('message', '')
+                # Extract mentions from the data message (or use sync mentions if it's a sync message)
+                if is_sync_message and sync_mentions:
+                    mentions = sync_mentions
+                    if mentions:
+                        self.logger.info(f"Found {len(mentions)} mentions in sync message: {mentions}")
+                else:
+                    mentions = data_message.get('mentions', [])
+                    if mentions:
+                        self.logger.info(f"Found {len(mentions)} mentions in message: {mentions}")
+
+                # Check if message contains mention placeholder but no mentions data
+                if not mentions and '\ufffc' in message_text:
+                    self.logger.debug(f"Message contains mention placeholder but no mentions data found")
+
                 # For sync messages, use the sync_group_info, otherwise get from data_message
                 if is_sync_message:
                     group_info = sync_group_info
@@ -219,7 +239,8 @@ class DaemonMessageProcessor:
                 group_id=group_id,
                 message_text=message_text,
                 timestamp=timestamp,
-                attachments=attachments  # Pass attachments to store
+                attachments=attachments,  # Pass attachments to store
+                mentions=mentions  # Pass mentions to store
             )
 
             if not message_id:
@@ -273,7 +294,7 @@ class DaemonMessageProcessor:
             self.logger.error(f"Error checking group monitoring: {e}")
             return False
 
-    def _store_message(self, source_uuid: str, group_id: str, message_text: str, timestamp: int, attachments: list = None) -> Optional[int]:
+    def _store_message(self, source_uuid: str, group_id: str, message_text: str, timestamp: int, attachments: list = None, mentions: list = None) -> Optional[int]:
         """Store a message and its attachments in the database."""
         try:
             # Ensure user exists
@@ -288,6 +309,28 @@ class DaemonMessageProcessor:
                 """, (source_uuid, group_id, message_text, timestamp))
 
                 message_id = cursor.lastrowid
+
+                # Store mentions if present
+                if mentions and message_id:
+                    self.logger.info(f"Storing {len(mentions)} mention(s) for message {message_id}")
+                    for mention in mentions:
+                        if isinstance(mention, dict):
+                            mentioned_uuid = mention.get('uuid')
+                            mention_start = mention.get('start', 0)
+                            mention_length = mention.get('length', 1)
+
+                            if mentioned_uuid:
+                                self.logger.debug(f"Storing mention: uuid={mentioned_uuid}, start={mention_start}, length={mention_length}")
+                                cursor.execute("""
+                                    INSERT INTO mentions (message_id, mentioned_uuid, mention_start, mention_length)
+                                    VALUES (?, ?, ?, ?)
+                                """, (message_id, mentioned_uuid, mention_start, mention_length))
+
+                                # Ensure mentioned user exists in database (using same connection)
+                                cursor.execute("""
+                                    INSERT OR IGNORE INTO users (uuid, last_seen)
+                                    VALUES (?, CURRENT_TIMESTAMP)
+                                """, (mentioned_uuid,))
 
                 # Store attachments if present
                 if attachments and message_id:
@@ -465,45 +508,69 @@ class DaemonMessageProcessor:
             import os
             import glob
 
-            attachment_id = attachment.get('id') or attachment.get('attachmentId')
-            if not attachment_id:
-                return
+            is_sticker = attachment.get('type') == 'sticker'
+
+            # For stickers, get the sticker ID from the data
+            if is_sticker:
+                sticker_data = attachment.get('data', {})
+                attachment_id = str(sticker_data.get('stickerId', ''))  # Convert to string
+                pack_id = sticker_data.get('packId')
+                if not attachment_id:
+                    self.logger.debug(f"Sticker missing stickerId: {sticker_data}")
+                    return
+            else:
+                attachment_id = attachment.get('id') or attachment.get('attachmentId')
+                if not attachment_id:
+                    return
 
             filename = attachment.get('filename') or attachment.get('fileName') or f"attachment_{timestamp}_{attachment_id}"
-            is_sticker = attachment.get('type') == 'sticker'
 
             # Look for attachment in signal-cli attachments directory
             attachments_dir = os.path.expanduser("~/.local/share/signal-cli/attachments")
 
-            # For stickers, also try sticker-specific directories
+            # For stickers, prioritize sticker-specific directories over general attachments
             if is_sticker:
-                sticker_data = attachment.get('data', {})
-                attachment_id = sticker_data.get('stickerId', attachment_id)
-                search_dirs = [
-                    attachments_dir,
+                # Prioritize pack-specific directory, then general sticker dirs, then attachments as last resort
+                search_dirs = []
+                if pack_id:
+                    search_dirs.append(os.path.expanduser(f"~/.local/share/signal-cli/stickers/{pack_id}"))
+                search_dirs.extend([
                     os.path.expanduser("~/.local/share/signal-cli/stickers"),
-                    os.path.expanduser("~/.local/share/signal-cli/data/stickers")
-                ]
+                    os.path.expanduser("~/.local/share/signal-cli/data/stickers"),
+                    attachments_dir  # Last resort
+                ])
             else:
                 search_dirs = [attachments_dir]
 
             found_file = None
+            self.logger.debug(f"Searching for {'sticker' if is_sticker else 'attachment'} {attachment_id} in {search_dirs}")
+
             for search_dir in search_dirs:
                 if not os.path.exists(search_dir):
                     continue
 
-                # Try to find the attachment file
-                search_patterns = [
-                    os.path.join(search_dir, attachment_id),
-                    os.path.join(search_dir, f"{attachment_id}*"),
-                    os.path.join(search_dir, f"*{attachment_id}*")
-                ]
-
-                for pattern in search_patterns:
-                    matches = glob.glob(pattern)
-                    if matches:
-                        found_file = matches[0]
+                # For stickers in pack directories, look for exact sticker ID
+                if is_sticker and pack_id and search_dir.endswith(pack_id):
+                    # In pack directory, stickers are named just by their ID (0, 1, 2, etc)
+                    exact_file = os.path.join(search_dir, attachment_id)
+                    if os.path.exists(exact_file):
+                        found_file = exact_file
+                        self.logger.debug(f"Found exact sticker file: {found_file}")
                         break
+                else:
+                    # Try to find the attachment file with patterns
+                    search_patterns = [
+                        os.path.join(search_dir, attachment_id),
+                        os.path.join(search_dir, f"{attachment_id}*"),
+                        os.path.join(search_dir, f"*{attachment_id}*")
+                    ]
+
+                    for pattern in search_patterns:
+                        matches = glob.glob(pattern)
+                        if matches:
+                            found_file = matches[0]
+                            self.logger.debug(f"Found file: {found_file}")
+                            break
 
                 if found_file:
                     break

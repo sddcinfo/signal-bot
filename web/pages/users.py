@@ -6,6 +6,7 @@ Manages user emoji reaction configurations.
 
 from typing import Dict, Any
 from ..shared.base_page import BasePage
+from ..shared.templates import get_emoji_picker_for_reactions
 
 
 class UsersPage(BasePage):
@@ -284,66 +285,5 @@ class UsersPage(BasePage):
         """
 
     def render_emoji_modal(self) -> str:
-        """Render the emoji picker modal."""
-        common_emojis = [
-            '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂',
-            '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩',
-            '😘', '😗', '😚', '😙', '😋', '😛', '😜', '🤪',
-            '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨',
-            '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥',
-            '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢',
-            '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠',
-            '🥳', '😎', '🤓', '🧐', '😕', '😟', '🙁', '☹️',
-            '😮', '😯', '😲', '😳', '🥺', '😦', '😧', '😨',
-            '😰', '😥', '😢', '😭', '😱', '😖', '😣', '😞',
-            '😓', '😩', '😫', '🥱', '😤', '😡', '😠', '🤬',
-            '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙',
-            '👈', '👉', '👆', '👇', '☝️', '✋', '🤚', '🖐',
-            '🖖', '👋', '🤏', '💪', '🦾', '🖕', '✍️', '🙏',
-            '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
-            '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖',
-            '💘', '💝', '💟', '☮️', '✝️', '☪️', '🕉', '☸️',
-            '✡️', '🔯', '🕎', '☯️', '☦️', '🛐', '⛎', '♈',
-            '♉', '♊', '♋', '♌', '♍', '♎', '♏', '♐'
-        ]
-
-        emoji_grid = ''.join([
-            f'<div class="emoji-item" onclick="addEmoji(\'{emoji}\')">{emoji}</div>'
-            for emoji in common_emojis
-        ])
-
-        return f"""
-            <div id="emojiModal" class="modal">
-                <div class="modal-content">
-                    <span class="close" onclick="closeEmojiPicker()">&times;</span>
-                    <h3>Configure Emoji Reactions</h3>
-
-                    <div class="form-group">
-                        <label>Reaction Mode:</label>
-                        <select id="reactionMode">
-                            <option value="random">Random</option>
-                            <option value="sequential">Sequential</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Selected Emojis (click to remove):</label>
-                        <div id="selectedEmojis" class="selected-emojis"></div>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Available Emojis (click to add):</label>
-                        <div class="emoji-grid">
-                            {emoji_grid}
-                        </div>
-                    </div>
-
-                    <div style="text-align: center; margin-top: 20px;">
-                        <button class="btn" onclick="saveFromModal()">Save Reactions</button>
-                        <button class="btn btn-secondary" onclick="closeEmojiPicker()">Cancel</button>
-                    </div>
-
-                    <input type="hidden" id="currentUserId" value="">
-                </div>
-            </div>
-        """
+        """Render the emoji picker modal using shared component."""
+        return get_emoji_picker_for_reactions()
