@@ -338,17 +338,17 @@ class AIAnalysisService:
         if not text:
             return text
 
-        # Basic conversions
+        import re
         html = text
 
-        # Headers
-        html = html.replace('\n### ', '\n<h3>').replace('###', '</h3>')
-        html = html.replace('\n## ', '\n<h2>').replace('##', '</h2>')
-        html = html.replace('\n# ', '\n<h1>').replace('#', '</h1>')
+        # Headers (more robust regex)
+        html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+        html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+        html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
 
-        # Bold and italic
-        html = html.replace('**', '<strong>', 1).replace('**', '</strong>', 1)
-        html = html.replace('*', '<em>', 1).replace('*', '</em>', 1)
+        # Bold and italic (more robust)
+        html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
+        html = re.sub(r'\*(.+?)\*', r'<em>\1</em>', html)
 
         # Line breaks
         html = html.replace('\n', '<br>\n')

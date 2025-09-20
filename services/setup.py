@@ -12,6 +12,7 @@ Follows the new UUID-based architecture.
 import re
 from utils.common import safe_strip
 import json
+import logging
 import time
 import subprocess
 import sys
@@ -1238,28 +1239,6 @@ class SetupService:
             'friendly_name': friendly_name
         }
 
-    def _build_friendly_name(self, contact: dict) -> str:
-        """
-        Build a friendly display name from contact data (for backward compatibility).
-        """
-        fields = self._extract_contact_fields(contact)
-        friendly_name = fields.get('friendly_name')
-
-        if friendly_name:
-            return friendly_name
-
-        # Fallback to phone number if available
-        phone = contact.get("number") or ""
-        phone = phone.strip() if phone else ""
-        if phone:
-            return f"User {phone[-4:]}"  # Last 4 digits for privacy
-
-        # Final fallback to UUID prefix
-        uuid = contact.get("uuid") or ""
-        if uuid:
-            return f"User {uuid}"
-
-        return "Unknown User"
 
     def _is_uuid(self, identifier: str) -> bool:
         """Check if identifier is a UUID format."""
@@ -1286,135 +1265,6 @@ class SetupService:
         # Format as UUID: 8-4-4-4-12
         return f"{phone_hash[:8]}-{phone_hash[8:12]}-{phone_hash[12:16]}-{phone_hash[16:20]}-{phone_hash[20:32]}"
 
-    def _fetch_user_profile(self, user_uuid: str) -> Optional[str]:
-        """
-        Fetch user profile name from Signal-CLI.
-
-        Args:
-            user_uuid: The UUID of the user to fetch profile for
-
-        Returns:
-            Profile name if found, None otherwise
-        """
-        try:
-            self.logger.debug(f"Fetching profile for user: {user_uuid}")
-
-            # Get bot phone from database
-            bot_phone = self.db.get_config("bot_phone_number")
-            if not bot_phone:
-                self.logger.error("Bot phone number not configured")
-                return None
-
-            # Use signal-cli to get user info
-            cmd = [
-                self.signal_cli_path,
-                "-u", bot_phone,
-                "getUserStatus",
-                user_uuid
-            ]
-
-            self.logger.debug(f"Running command: {' '.join(cmd)}")
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10  # Short timeout for profile fetches
-            )
-
-            if result.returncode != 0:
-                self.logger.debug(f"Failed to fetch profile for {user_uuid}: {result.stderr}")
-                return None
-
-            # Parse the output to extract profile name
-            output = result.stdout.strip()
-            if not output:
-                return None
-
-            # Try to parse JSON output if it's structured
-            try:
-                import json
-                data = json.loads(output)
-                if isinstance(data, dict):
-                    # Look for profile name in common fields
-                    profile_name = (
-                        data.get('profileName') or
-                        data.get('displayName') or
-                        data.get('name') or
-                        data.get('givenName')
-                    )
-                    if profile_name and profile_name.strip():
-                        self.logger.debug(f"Found profile name for {user_uuid}: {profile_name}")
-                        return profile_name.strip()
-            except (json.JSONDecodeError, TypeError):
-                # Not JSON, try to extract from plain text
-                pass
-
-            # Try alternative command to get contact info using JSON
-            cmd_contact = [
-                self.signal_cli_path,
-                "--output=json",
-                "-u", bot_phone,
-                "listContacts"
-            ]
-
-            self.logger.debug(f"Trying contact list: {' '.join(cmd_contact)}")
-            result_contact = subprocess.run(
-                cmd_contact,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-
-            if result_contact.returncode == 0 and result_contact.stdout.strip():
-                # Parse the JSON output from listContacts
-                try:
-                    import json
-                    contacts = json.loads(result_contact.stdout.strip())
-
-                    for contact in contacts:
-                        if contact.get('uuid') == user_uuid:
-                            # Priority: contact name > profile name
-                            contact_name_raw = contact.get('name', '')
-                            contact_name = contact_name_raw.strip() if contact_name_raw else ''
-
-                            profile = contact.get('profile', {})
-                            profile_given_raw = profile.get('givenName', '')
-                            profile_given = profile_given_raw.strip() if profile_given_raw else ''
-
-                            profile_family_raw = profile.get('familyName', '')
-                            profile_family = profile_family_raw.strip() if profile_family_raw else ''
-
-                            # Build profile name from given + family if available
-                            profile_name = ''
-                            if profile_given and profile_family:
-                                profile_name = f"{profile_given} {profile_family}".strip()
-                            elif profile_given:
-                                profile_name = profile_given
-                            elif profile_family:
-                                profile_name = profile_family
-
-                            # Return the best available name (prioritize contact name over profile name)
-                            if contact_name:
-                                self.logger.debug(f"Found contact name for {user_uuid}: {contact_name}")
-                                return contact_name
-                            elif profile_name:
-                                self.logger.debug(f"Found profile name for {user_uuid}: {profile_name}")
-                                return profile_name
-
-                except json.JSONDecodeError as e:
-                    self.logger.warning(f"Failed to parse JSON from listContacts: {e}")
-                except Exception as e:
-                    self.logger.warning(f"Error processing contact JSON: {e}")
-
-            self.logger.debug(f"No profile name found for user: {user_uuid}")
-            return None
-
-        except subprocess.TimeoutExpired:
-            self.logger.warning(f"Timeout fetching profile for user: {user_uuid}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Error fetching profile for user {user_uuid}: {str(e)}")
-            return None
 
     def clean_import_contacts_and_groups(self, bot_phone: str) -> Dict[str, Any]:
         """

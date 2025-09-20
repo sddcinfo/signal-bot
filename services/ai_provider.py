@@ -16,8 +16,8 @@ import requests
 import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
-from datetime import datetime
 from config.constants import TIMEOUTS, NETWORK
+from utils.logging import get_logger
 
 
 class AIProvider(ABC):

@@ -4,6 +4,7 @@ Daemon-native message processor
 
 Processes messages entirely through the daemon interface without mixing subprocess calls.
 """
+import logging
 import random
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -122,8 +123,7 @@ class DaemonMessageProcessor:
                 mentions = sync_mentions if is_sync_message else []
             else:
                 # Debug: log available keys in data_message
-                if self.logger.level == logging.DEBUG:
-                    self.logger.debug(f"data_message keys: {list(data_message.keys())}")
+                self.logger.debug(f"data_message keys: {list(data_message.keys())}")
 
                 message_text = data_message.get('message', '')
                 # Extract mentions from the data message (or use sync mentions if it's a sync message)
