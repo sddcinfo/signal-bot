@@ -1,10 +1,24 @@
-# Optional dependencies for Signal Bot
-# The bot runs without these - they're only needed for QR code generation in setup
+# Dependencies for Signal Bot
+# Core dependencies for bot functionality
 
-# QR code generation (only used during device linking setup)
-qrcode[pil]>=7.0.0
+# QR code generation (used during device linking setup)
+qrcode[pil]==7.4.2
 Pillow>=8.0.0
 
-# Note: The Signal Bot uses only standard Python libraries for core functionality
-# Install these only if you want QR code generation for device linking:
+# AI integration dependencies
+google-generativeai>=0.3.0
+requests>=2.28.0
+
+# Markdown processing for AI responses
+markdown>=3.4.0
+
+# Timezone support for timestamp formatting
+pytz>=2024.1
+
+# Process management for manage.py
+psutil>=5.9.0
+
+# Note: Install in virtual environment:
+#   python3 -m venv venv
+#   source venv/bin/activate
 #   pip install -r requirements.txt

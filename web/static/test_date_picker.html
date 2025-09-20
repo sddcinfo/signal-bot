@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Date Picker</title>
+</head>
+<body>
+    <h1>Test Date Picker Fix</h1>
+
+    <div>
+        <label>
+            <input type="radio" name="date-mode" id="mode-all" value="all" checked>
+            All Dates
+        </label>
+        <label>
+            <input type="radio" name="date-mode" id="mode-today" value="today">
+            Today
+        </label>
+        <label>
+            <input type="radio" name="date-mode" id="mode-specific" value="specific">
+            Pick Date
+        </label>
+        <input type="date" id="date-picker" style="display: none; padding: 5px; border: 1px solid #ddd;">
+    </div>
+
+    <div id="log" style="margin-top: 20px; padding: 10px; background: #f0f0f0;"></div>
+
+    <script>
+    function log(msg) {
+        document.getElementById('log').innerHTML += msg + '<br>';
+    }
+
+    // Add event listeners to all radio buttons
+    document.querySelectorAll('input[name="date-mode"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const datePicker = document.getElementById('date-picker');
+            log(`Mode changed to: ${this.value}`);
+
+            if (this.value === 'specific') {
+                datePicker.style.display = 'inline-block';
+                log('Date picker should be visible now');
+                log(`Date picker display: ${datePicker.style.display}`);
+            } else {
+                datePicker.style.display = 'none';
+                log('Date picker hidden');
+            }
+        });
+    });
+
+    log('Page loaded and ready');
+    </script>
+</body>
+</html>

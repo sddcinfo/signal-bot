@@ -1,20 +1,21 @@
 #!/bin/bash
 #
-# Signal CLI Installation Script with Existing Installation Handling
-# Handles existing installations, provides update options, and robust error handling
+# Signal CLI Installation Script (Simplified)
+# Handles existing installations, provides update options, and robust error handling.
 #
 
 # Exit on any error
 set -e
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# --- Pre-flight Checks ---
+# Check for root privileges
+if [ "$(id -u)" -ne 0 ]; then
+  echo "ERROR: This script requires superuser privileges for installation."
+  echo "Please run with sudo: sudo $0 $*"
+  exit 1
+fi
 
-# Command line options
+# --- Command Line Options ---
 FORCE=false
 UPDATE=false
 SKIP_CHECKS=false
@@ -22,337 +23,287 @@ SKIP_CHECKS=false
 # Parse command line arguments
 for arg in "$@"; do
     case $arg in
-        --force)
+        --force) 
             FORCE=true
             shift
-            ;;
+            ;; 
         --update)
             UPDATE=true
             shift
-            ;;
+            ;; 
         --skip-checks)
             SKIP_CHECKS=true
             shift
-            ;;
-        --help|-h)
+            ;; 
+        --help|-h) 
             echo "Signal CLI Installer"
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --force       Force reinstall even if signal-cli is working"
-            echo "  --update      Update to newer version if available"
-            echo "  --skip-checks Skip pre-installation checks"
-            echo "  --help        Show this help message"
+            echo "  --force       Force reinstall even if signal-cli is working."
+            echo "  --update      Update to a newer version if available."
+            echo "  --skip-checks Skip pre-installation checks."
+            echo "  --help        Show this help message."
             echo ""
             echo "Examples:"
-            echo "  $0                    # Install signal-cli (skip if already working)"
-            echo "  $0 --force           # Force reinstall even if working"
-            echo "  $0 --update          # Update to newer version"
+            echo "  $0              # Install signal-cli (skips if already working)."
+            echo "  $0 --force     # Force reinstall even if working."
+            echo "  $0 --update    # Update to a newer version."
             exit 0
-            ;;
+            ;; 
         *)
-            echo -e "${RED}Unknown option: $arg${NC}"
-            echo "Use --help for usage information"
+            echo "ERROR: Unknown option: $arg"
+            echo "Use --help for usage information."
             exit 1
-            ;;
+            ;; 
     esac
 done
 
 echo "========================================="
-echo "Signal CLI Installer (Enhanced Version)"
+echo "Signal CLI Installer (Simplified)"
 echo "========================================="
 echo ""
 
-# Use latest available version
-VERSION="0.13.18"
-echo "Target signal-cli version: $VERSION"
+# --- Version Handling ---
+echo "INFO: Fetching the latest version from GitHub..."
+LATEST_VERSION=$(curl -s "https://api.github.com/repos/AsamK/signal-cli/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v?([^\"]+)".*/\1/')
 
-# Step 0: Check existing installation
+FALLBACK_VERSION="0.13.18"
+
+if [ -z "$LATEST_VERSION" ]; then
+    echo "WARNING: Could not fetch the latest version from GitHub. Using fallback: $FALLBACK_VERSION"
+    VERSION="$FALLBACK_VERSION"
+else
+    echo "INFO: Latest version found on GitHub: $LATEST_VERSION"
+    VERSION="$LATEST_VERSION"
+fi
+
+echo "INFO: Target signal-cli version: $VERSION"
+
+# --- Step 0: Check Existing Installation ---
 if [ "$SKIP_CHECKS" = false ]; then
     echo ""
-    echo "Step 0: Checking existing installation..."
-    EXISTING_VERSION=""
-    EXISTING_WORKING=false
-
-    # Check if signal-cli exists and works
-    if command -v signal-cli &> /dev/null; then
-        echo -e "${BLUE}Found existing signal-cli installation${NC}"
-
-        # Try to get version
-        if EXISTING_VERSION=$(signal-cli --version 2>&1); then
-            EXISTING_WORKING=true
-            echo -e "${GREEN}✓ Existing installation works: $EXISTING_VERSION${NC}"
-
-            # Extract version number for comparison
-            if [[ $EXISTING_VERSION =~ signal-cli\ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-                EXISTING_VER_NUM="${BASH_REMATCH[1]}"
-                echo "Current version: $EXISTING_VER_NUM"
-                echo "Target version: $VERSION"
-
-                if [ "$EXISTING_VER_NUM" = "$VERSION" ]; then
-                    if [ "$FORCE" = false ] && [ "$UPDATE" = false ]; then
-                        echo -e "${GREEN}✓ signal-cli $VERSION is already installed and working!${NC}"
-                        echo ""
-                        echo "Use --force to reinstall or --update to check for updates"
-                        exit 0
-                    fi
-                elif [ "$UPDATE" = true ]; then
-                    echo -e "${YELLOW}Update available: $EXISTING_VER_NUM → $VERSION${NC}"
-                elif [ "$FORCE" = false ]; then
-                    echo -e "${YELLOW}Different version installed. Use --force to reinstall or --update to update${NC}"
-                    exit 0
-                fi
+    echo "--- Step 0: Checking existing installation... ---"
+    
+    if ! command -v signal-cli &> /dev/null; then
+        echo "INFO: No existing signal-cli installation found. Proceeding with installation."
+    else
+        echo "INFO: Found existing signal-cli installation."
+        
+        if ! EXISTING_VERSION_OUTPUT=$(signal-cli --version 2>&1); then
+            echo "WARNING: Existing signal-cli found but is not working properly."
+            if [ "$FORCE" = false ]; then
+                echo "ERROR: Cannot determine installed version. Please fix the existing installation or run this script with --force."
+                exit 1
+            else
+                echo "INFO: --force is set, proceeding with re-installation."
             fi
         else
-            echo -e "${YELLOW}⚠ Existing signal-cli found but not working properly${NC}"
-            echo "Will reinstall..."
-        fi
-    else
-        echo "No existing signal-cli installation found"
-    fi
+            echo "INFO: Existing installation works: $EXISTING_VERSION_OUTPUT"
+            EXISTING_VER_NUM=$(echo "$EXISTING_VERSION_OUTPUT" | sed -n 's/.*signal-cli \([0-9.]*\).*/\1/p')
+            
+            if [ -z "$EXISTING_VER_NUM" ]; then
+                echo "WARNING: Could not determine installed version number."
+                if [ "$FORCE" = false ]; then
+                    echo "ERROR: Cannot parse version. Please fix installation or run with --force."
+                    exit 1
+                else
+                    echo "INFO: --force is set, proceeding with re-installation."
+                fi
+            else
+                echo "INFO: Current version: $EXISTING_VER_NUM"
+                echo "INFO: Target version: $VERSION"
 
-    if [ "$EXISTING_WORKING" = true ] && [ "$FORCE" = false ] && [ "$UPDATE" = false ]; then
-        echo -e "${YELLOW}signal-cli is already installed and working.${NC}"
-        echo "Use --force to reinstall anyway, or --update to update to newer version"
-        exit 0
+                if [ "$EXISTING_VER_NUM" = "$VERSION" ]; then
+                    if [ "$FORCE" = false ]; then
+                        echo "SUCCESS: signal-cli $VERSION is already installed and up-to-date."
+                        echo "Use --force to reinstall anyway."
+                        exit 0
+                    else
+                        echo "INFO: Version is the same, but --force is set. Proceeding with re-installation."
+                    fi
+                else
+                    HIGHEST_VERSION=$(printf '%s\n' "$VERSION" "$EXISTING_VER_NUM" | sort -V | tail -n1)
+                    
+                    if [ "$HIGHEST_VERSION" = "$EXISTING_VER_NUM" ]; then
+                        if [ "$FORCE" = false ]; then
+                            echo "INFO: Installed version ($EXISTING_VER_NUM) is newer than the target version ($VERSION)."
+                            echo "Use --force to downgrade/reinstall."
+                            exit 0
+                        else
+                            echo "INFO: --force is set. Proceeding with downgrade/reinstall."
+                        fi
+                    else
+                        if [ "$UPDATE" = true ] || [ "$FORCE" = true ]; then
+                            echo "INFO: Newer version available. Proceeding with update."
+                        else
+                            echo "WARNING: A newer version ($VERSION) is available."
+                            echo "Use --update to upgrade, or --force to reinstall."
+                            exit 0
+                        fi
+                    fi
+                fi
+            fi
+        fi
     fi
 fi
 
-# Step 1: Check Java
+
+# --- Step 1: Check Dependencies ---
 echo ""
-echo "Step 1: Checking Java..."
+echo "--- Step 1: Checking dependencies... ---"
 if command -v java &> /dev/null; then
     JAVA_VERSION_OUTPUT=$(java -version 2>&1 | head -n 1)
-    echo -e "${GREEN}✓ Java found: $JAVA_VERSION_OUTPUT${NC}"
+    echo "INFO: Java found: $JAVA_VERSION_OUTPUT"
+    
+    # A simpler, more robust way to check Java version
+    MAJOR_VERSION=$(echo "$JAVA_VERSION_OUTPUT" | sed -E 's/.* version "([0-9]+).*/\1/' | head -n1)
+    if [ "$MAJOR_VERSION" = "1" ]; then
+        MAJOR_VERSION=$(echo "$JAVA_VERSION_OUTPUT" | sed -E 's/.* version "1\.([0-9]+).*/\1/' | head -n1)
+    fi
 
-    # Extract major version number
-    if [[ $JAVA_VERSION_OUTPUT =~ \"([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-        MAJOR="${BASH_REMATCH[1]}"
-        if [ "$MAJOR" -lt "17" ] && [ "$MAJOR" != "1" ]; then
-            echo -e "${YELLOW}⚠ Java $MAJOR found, but 17+ recommended${NC}"
-        fi
-    elif [[ $JAVA_VERSION_OUTPUT =~ version\ \"([0-9]+) ]]; then
-        MAJOR="${BASH_REMATCH[1]}"
-        if [ "$MAJOR" -lt "17" ]; then
-            echo -e "${YELLOW}⚠ Java $MAJOR found, but 17+ recommended${NC}"
-        fi
+    if [ -z "$MAJOR_VERSION" ]; then
+        echo "WARNING: Could not determine Java major version. Please ensure it is 17 or higher."
+    elif [ "$MAJOR_VERSION" -lt 17 ]; then
+        echo "WARNING: Java version $MAJOR_VERSION found, but version 17+ is recommended."
+    else
+        echo "INFO: Java version $MAJOR_VERSION is 17+. Good."
     fi
 else
-    echo -e "${RED}✗ Java not found!${NC}"
-    echo ""
-    echo "Installing Java is required. Run one of these commands:"
-    echo "  Ubuntu/Debian: sudo apt-get install openjdk-17-jre"
-    echo "  RHEL/CentOS:   sudo yum install java-17-openjdk"
-    echo "  Arch:          sudo pacman -S jre17-openjdk"
+    echo "ERROR: Java not found!"
+    echo "Please install Java 17 or later. e.g., sudo apt-get install openjdk-17-jre"
     exit 1
 fi
 
-# Step 2: Download
+if ! command -v wget &> /dev/null && ! command -v curl &> /dev/null; then
+    echo "ERROR: Neither wget nor curl found!"
+    echo "Please install one of them to proceed. e.g., sudo apt-get install wget"
+    exit 1
+fi
+
+
+# --- Step 2: Download ---
 echo ""
-echo "Step 2: Downloading signal-cli..."
+echo "--- Step 2: Downloading signal-cli... ---"
+echo "INFO: Cleaning up old temporary files..."
+rm -f /tmp/signal-cli-*.tar.gz
+rm -rf /tmp/signal-cli-*
+
 DOWNLOAD_URL="https://github.com/AsamK/signal-cli/releases/download/v${VERSION}/signal-cli-${VERSION}-Linux-native.tar.gz"
 TEMP_FILE="/tmp/signal-cli-${VERSION}.tar.gz"
 
-# Remove old file if exists
-rm -f "$TEMP_FILE"
+echo "INFO: Downloading from: $DOWNLOAD_URL"
 
-echo "Downloading from: $DOWNLOAD_URL"
-echo "Saving to: $TEMP_FILE"
-echo ""
-
-# Download with progress bar and error handling
 if command -v wget &> /dev/null; then
-    if ! wget --progress=bar:force "$DOWNLOAD_URL" -O "$TEMP_FILE" 2>&1 | \
-        grep --line-buffered "%" | \
-        sed -u -e "s/\.\.\.\.\.\.//g" | \
-        awk '{printf("\rDownloading: %s", $0)}'; then
-        echo -e "\n${RED}✗ Download failed with wget${NC}"
+    if ! wget -q --show-progress "$DOWNLOAD_URL" -O "$TEMP_FILE"; then
+        echo "ERROR: Download failed with wget."
         exit 1
     fi
-    echo ""  # New line after progress
 elif command -v curl &> /dev/null; then
     if ! curl -# -L "$DOWNLOAD_URL" -o "$TEMP_FILE"; then
-        echo -e "${RED}✗ Download failed with curl${NC}"
+        echo "ERROR: Download failed with curl."
         exit 1
     fi
-else
-    echo -e "${RED}✗ Neither wget nor curl found!${NC}"
-    echo "Install wget with: sudo apt-get install wget"
+fi
+
+if [ ! -f "$TEMP_FILE" ] || [ "$(stat -c%s "$TEMP_FILE")" -lt 1000000 ]; then
+    echo "ERROR: Download failed or the file is too small."
     exit 1
 fi
 
-# Verify download
-if [ ! -f "$TEMP_FILE" ]; then
-    echo -e "${RED}✗ Download failed - file not found${NC}"
-    exit 1
-fi
+FILE_SIZE_MB=$(( $(stat -c%s "$TEMP_FILE") / 1024 / 1024 ))
+echo "SUCCESS: Downloaded successfully (${FILE_SIZE_MB} MB)."
 
-FILE_SIZE=$(stat -c%s "$TEMP_FILE" 2>/dev/null || stat -f%z "$TEMP_FILE" 2>/dev/null || wc -c < "$TEMP_FILE")
-FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
-echo -e "${GREEN}✓ Downloaded successfully (${FILE_SIZE_MB} MB)${NC}"
 
-if [ "$FILE_SIZE" -lt 1000000 ]; then
-    echo -e "${RED}✗ File too small, download may have failed${NC}"
-    exit 1
-fi
-
-# Step 3: Extract
+# --- Step 3: Extract ---
 echo ""
-echo "Step 3: Extracting archive..."
+echo "--- Step 3: Extracting archive... ---"
 cd /tmp
 
-# Clean up any existing extracted files first to prevent conflicts
-echo "Cleaning up existing extracted files..."
-rm -rf /tmp/signal-cli /tmp/signal-cli-* 2>/dev/null || true
-
-# Now extract with error handling
-echo "Extracting $TEMP_FILE..."
+echo "INFO: Extracting $TEMP_FILE..."
 if ! tar xzf "$TEMP_FILE"; then
-    echo -e "${RED}✗ Extraction failed${NC}"
-    echo "This could be due to:"
-    echo "  - Corrupted download"
-    echo "  - Insufficient disk space"
-    echo "  - Permissions issues"
+    echo "ERROR: Extraction failed. The downloaded file may be corrupt."
     exit 1
 fi
 
-# Check what was extracted - could be a directory or a single binary
-if [ -f "/tmp/signal-cli" ]; then
-    echo "Found native binary: /tmp/signal-cli"
-    BINARY_TYPE="native"
-elif [ -d "/tmp/signal-cli" ]; then
-    echo "Found directory: /tmp/signal-cli"
-    EXTRACTED_DIR="signal-cli"
-    BINARY_TYPE="directory"
-elif [ -d "/tmp/signal-cli-${VERSION}" ]; then
-    echo "Found directory: /tmp/signal-cli-${VERSION}"
-    EXTRACTED_DIR="signal-cli-${VERSION}"
-    BINARY_TYPE="directory"
+if [ -d "/tmp/signal-cli-${VERSION}" ]; then
+    EXTRACTED_ITEM="/tmp/signal-cli-${VERSION}"
+    IS_DIR=true
+elif [ -f "/tmp/signal-cli" ]; then
+    EXTRACTED_ITEM="/tmp/signal-cli"
+    IS_DIR=false
 else
-    echo -e "${RED}✗ Extraction failed - no signal-cli binary or directory found${NC}"
-    echo "Contents of /tmp:"
-    ls -la /tmp/signal* 2>/dev/null || echo "No signal files found"
+    echo "ERROR: Extraction failed - no recognized file or directory found."
+    ls -la /tmp/signal* 2>/dev/null || echo "No signal files found in /tmp"
     exit 1
 fi
-echo -e "${GREEN}✓ Extracted successfully${NC}"
+echo "SUCCESS: Extracted successfully."
 
-# Step 4: Install
+
+# --- Step 4: Install ---
 echo ""
-echo "Step 4: Installing signal-cli..."
-echo "This requires sudo access to install to /opt"
+echo "--- Step 4: Installing signal-cli... ---"
+TARGET_DIR="/opt/signal-cli-${VERSION}"
 
-# Create /opt if it doesn't exist
-sudo mkdir -p /opt
-
-if [ "$BINARY_TYPE" = "native" ]; then
-    # Handle native binary
-    echo "Installing native binary..."
-
-    # Create directory structure
-    TARGET_DIR="/opt/signal-cli-${VERSION}"
-    sudo mkdir -p "$TARGET_DIR/bin"
-
-    # Copy binary
-    sudo cp "/tmp/signal-cli" "$TARGET_DIR/bin/signal-cli"
-    sudo chmod +x "$TARGET_DIR/bin/signal-cli"
-    echo -e "${GREEN}✓ Native binary installed to $TARGET_DIR/bin/signal-cli${NC}"
-
-else
-    # Handle directory installation (traditional Java distribution)
-    TARGET_DIR="/opt/signal-cli-${VERSION}"
-
-    # Remove old installation if exists
-    if [ -d "$TARGET_DIR" ]; then
-        echo "Removing old installation..."
-        sudo rm -rf "$TARGET_DIR"
-    fi
-
-    # Move to /opt with version name
-    sudo mv "/tmp/$EXTRACTED_DIR" "$TARGET_DIR"
-    echo -e "${GREEN}✓ Directory moved to $TARGET_DIR${NC}"
-
-    # Set permissions
-    sudo chmod +x "$TARGET_DIR/bin/signal-cli"
-    sudo chmod -R 755 "$TARGET_DIR"
+if [ -d "$TARGET_DIR" ]; then
+    echo "INFO: Removing old installation at $TARGET_DIR..."
+    rm -rf "$TARGET_DIR"
 fi
 
-# Step 5: Create symlink
-echo ""
-echo "Step 5: Creating symlink..."
-sudo mkdir -p /usr/local/bin
-sudo rm -f /usr/local/bin/signal-cli  # Remove old symlink if exists
-sudo ln -s "$TARGET_DIR/bin/signal-cli" /usr/local/bin/signal-cli
-echo -e "${GREEN}✓ Symlink created at /usr/local/bin/signal-cli${NC}"
+mkdir -p "$TARGET_DIR/bin"
 
-# Step 6: Set permissions on symlink target
-echo ""
-echo "Step 6: Verifying permissions..."
-sudo chmod +x "$TARGET_DIR/bin/signal-cli"
-echo -e "${GREEN}✓ Permissions set${NC}"
-
-# Step 7: Verify installation
-echo ""
-echo "Step 7: Verifying installation..."
-
-# Test direct execution
-if "$TARGET_DIR/bin/signal-cli" --version &> /dev/null; then
-    VERSION_OUTPUT=$("$TARGET_DIR/bin/signal-cli" --version 2>&1)
-    echo -e "${GREEN}✓ Direct execution works: $VERSION_OUTPUT${NC}"
+if [ "$IS_DIR" = true ]; then
+    echo "INFO: Installing from directory..."
+    mv "$EXTRACTED_ITEM"/* "$TARGET_DIR/"
 else
-    echo -e "${YELLOW}⚠ Direct execution test failed, but installation may still work${NC}"
+    echo "INFO: Installing native binary..."
+    mv "$EXTRACTED_ITEM" "$TARGET_DIR/bin/signal-cli"
 fi
 
-# Test symlink
+chmod -R 755 "$TARGET_DIR"
+chmod +x "$TARGET_DIR/bin/signal-cli"
+echo "INFO: Installed to $TARGET_DIR"
+
+
+# --- Step 5: Create Symlink ---
+echo ""
+echo "--- Step 5: Creating symlink... ---"
+mkdir -p /usr/local/bin
+ln -sf "$TARGET_DIR/bin/signal-cli" /usr/local/bin/signal-cli
+echo "SUCCESS: Symlink created at /usr/local/bin/signal-cli"
+
+
+# --- Step 6: Verify Installation ---
+echo ""
+echo "--- Step 6: Verifying installation... ---"
 if /usr/local/bin/signal-cli --version &> /dev/null; then
-    echo -e "${GREEN}✓ Symlink works${NC}"
+    VERSION_OUTPUT=$(/usr/local/bin/signal-cli --version 2>&1)
+    echo "SUCCESS: Installation verified. $VERSION_OUTPUT"
 else
-    echo -e "${YELLOW}⚠ Symlink test failed, checking PATH...${NC}"
+    echo "WARNING: Verification command failed. Check your PATH or try running again."
 fi
 
-# Check if /usr/local/bin is in PATH
-if [[ ":$PATH:" == *":/usr/local/bin:"* ]]; then
-    echo -e "${GREEN}✓ /usr/local/bin is in PATH${NC}"
-else
-    echo -e "${YELLOW}⚠ /usr/local/bin is not in PATH${NC}"
-    echo "Add to PATH by running:"
-    echo '  export PATH=/usr/local/bin:$PATH'
-    echo "Or add to ~/.bashrc for permanent effect"
+if [[ ":$PATH:" != *":/usr/local/bin:"* ]]; then
+    echo "WARNING: /usr/local/bin is not in your PATH."
+    echo "You may need to run 'export PATH=/usr/local/bin:$PATH' or add it to your shell profile."
 fi
 
-# Cleanup
+
+# --- Cleanup ---
 rm -f "$TEMP_FILE"
-rm -rf /tmp/signal-cli /tmp/signal-cli-* 2>/dev/null || true
+rm -rf /tmp/signal-cli-*
 
-# Final summary
+
+# --- Final Summary ---
 echo ""
 echo "========================================="
-if [ "$EXISTING_WORKING" = true ] && [ "$FORCE" = true ]; then
-    echo -e "${GREEN}Reinstallation Complete!${NC}"
-elif [ "$EXISTING_WORKING" = true ] && [ "$UPDATE" = true ]; then
-    echo -e "${GREEN}Update Complete!${NC}"
-else
-    echo -e "${GREEN}Installation Complete!${NC}"
-fi
+echo "Installation Complete!"
 echo "========================================="
 echo ""
 echo "signal-cli has been installed to:"
 echo "  Binary: $TARGET_DIR/bin/signal-cli"
-echo "  Symlink: /usr/local/bin/signal-cli"
+  echo "  Symlink: /usr/local/bin/signal-cli"
 echo ""
-echo "Test the installation:"
+echo "Test the installation by running:"
 echo "  signal-cli --version"
 echo ""
-echo "If 'signal-cli' command not found, run:"
-echo "  export PATH=/usr/local/bin:\$PATH"
-echo ""
-echo "Next steps:"
-echo "1. Register your phone number:"
-echo "   signal-cli -u +YOURPHONE register"
-echo ""
-echo "2. Verify with SMS code:"
-echo "   signal-cli -u +YOURPHONE verify CODE"
-echo ""
-echo "3. Run the bot:"
-echo "   python3 signal_bot.py"
-echo ""
-echo -e "${GREEN}✓ Ready to use!${NC}"

@@ -1,0 +1,1 @@
+# Shared components for Signal Bot web interface

@@ -31,15 +31,16 @@ class MessagingService:
 
     def receive_messages(self, timeout_seconds: int = 5) -> List[Dict[str, Any]]:
         """
-        Poll for new messages using signal-cli receive with immediate return.
+        Poll for new messages using signal-cli receive.
 
         Args:
-            timeout_seconds: Not used anymore - kept for compatibility
+            timeout_seconds: How long to wait for new messages (0 = no wait, just get queued)
 
         Returns:
             List of message dictionaries with parsed envelope data
         """
         try:
+            # Build command - if timeout is 0, don't add --timeout flag
             cmd = [
                 self.signal_cli_path,
                 "-a", self.bot_phone,
@@ -47,8 +48,14 @@ class MessagingService:
                 "receive"
             ]
 
-            self.logger.debug("Polling for messages (non-blocking)")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if timeout_seconds > 0:
+                cmd.extend(["--timeout", str(timeout_seconds)])
+                self.logger.debug(f"Polling for messages with {timeout_seconds}s timeout")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds + 5)
+            else:
+                # No timeout - just get any queued messages immediately
+                self.logger.debug("Getting queued messages (no wait)")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
 
             if result.returncode != 0:
                 self.logger.warning("signal-cli receive failed with code %d", result.returncode)
@@ -62,14 +69,36 @@ class MessagingService:
                 self.logger.debug("No messages available")
                 return []
             else:
-                self.logger.debug("Signal-cli output received: %s", result.stdout.strip()[:200])
+                # Log full output for debugging
+                output_lines = result.stdout.strip().split('\n')
+                self.logger.info(f"Signal-cli returned {len(output_lines)} lines of output")
+                for i, line in enumerate(output_lines[:10]):  # Log first 10 lines
+                    self.logger.debug(f"Line {i}: {line[:200]}")
 
             # Parse JSON output - signal-cli returns one JSON object per line
             messages = []
-            for line in result.stdout.strip().split('\n'):
+            for idx, line in enumerate(result.stdout.strip().split('\n')):
                 if line.strip():
                     try:
                         envelope = json.loads(line)
+                        # Log envelope details for debugging
+                        env_type = "unknown"
+                        msg_text = ""
+                        if 'envelope' in envelope:
+                            if 'dataMessage' in envelope['envelope']:
+                                env_type = "data_message"
+                                dm = envelope['envelope']['dataMessage']
+                                if isinstance(dm, str):
+                                    msg_text = dm[:30]
+                                elif isinstance(dm, dict) and 'message' in dm:
+                                    msg_text = dm['message'][:30] if dm['message'] else ""
+                            elif 'syncMessage' in envelope['envelope']:
+                                env_type = "sync_message"
+                            elif 'receiptMessage' in envelope['envelope']:
+                                env_type = "receipt"
+                            elif 'typingMessage' in envelope['envelope']:
+                                env_type = "typing"
+                        self.logger.debug(f"Line {idx}: {env_type} - {msg_text}")
                         messages.append(envelope)
                     except json.JSONDecodeError as e:
                         self.logger.warning("Failed to parse JSON line: %s - %s", line, e)
@@ -193,6 +222,7 @@ class MessagingService:
                 # Check for other message types if no text
                 if not message_text:
                     if data_message.get('attachments'):
+                        # Store metadata for attachment-only messages
                         attachments = data_message.get('attachments', [])
                         attachment_details = []
                         for att in attachments:
@@ -208,29 +238,36 @@ class MessagingService:
                         else:
                             message_text = f"[Attachment: {len(attachments)} file(s)]"
                     elif data_message.get('sticker'):
+                        # Treat stickers as attachments for storage
                         sticker = data_message.get('sticker', {})
                         pack_id = sticker.get('packId', 'unknown')
                         sticker_id = sticker.get('stickerId', 'unknown')
                         message_text = f"[Sticker from pack {pack_id[:8]}... id: {sticker_id}]"
+                        # Create synthetic attachment data for sticker
+                        data_message['sticker_as_attachment'] = True
                     elif data_message.get('reaction'):
                         # This is a reaction, not a message - skip it
                         reaction_info = data_message.get('reaction', {})
                         self.logger.debug("Skipping reaction from %s: %s to message %s",
-                                        source_uuid[:8],
+                                        source_uuid,
                                         reaction_info.get('emoji', 'unknown'),
                                         reaction_info.get('targetTimestamp', 'unknown'))
                         return False
                     elif data_message.get('remoteDelete'):
-                        message_text = "[Message deleted]"
+                        # Skip remote deletions - we don't care if they try to delete
+                        self.logger.debug("Skipping remote deletion from %s", source_uuid)
+                        return False
                     else:
-                        # Log what type of message this is for debugging
+                        # Log unknown message types in debug mode only, don't store them
                         message_keys = list(data_message.keys()) if isinstance(data_message, dict) else []
-                        self.logger.debug("Message from %s with no text has keys: %s", source_uuid[:8], message_keys)
-                        # Set a descriptive message for unknown types
                         if message_keys:
-                            message_text = f"[Unknown message type with keys: {', '.join(message_keys)}]"
+                            self.logger.debug("Skipping unknown message type from %s with keys: %s",
+                                            source_uuid, message_keys)
                         else:
-                            message_text = "[Empty message]"
+                            # Edge case: completely empty message
+                            self.logger.warning("Empty message envelope from %s with no content or keys",
+                                              source_uuid)
+                        return False
 
             # For sync messages, we need to check if it was sent to a group
             if not group_info and is_sync_message:
@@ -266,13 +303,13 @@ class MessagingService:
             # Check if we've already processed this message
             if self.db.is_message_processed(timestamp, group_id, source_uuid):
                 self.logger.debug("Message already processed: %s from %s in %s",
-                                timestamp, source_uuid[:8], group_id[:8])
+                                timestamp, source_uuid, group_id)
                 return True
 
             # Check if this group is monitored
             if not self.db.is_group_monitored(group_id):
                 self.logger.debug("Group %s not monitored, marking processed but not reacting",
-                                group_id[:8])
+                                group_id)
                 # Still add user to group membership and upsert user
                 self.db.upsert_user(source_uuid)
                 self.db.add_group_member(group_id, source_uuid)
@@ -285,7 +322,7 @@ class MessagingService:
             else:
                 display_text = "(no text content)"
             self.logger.info("Processing message from %s in group %s: %s",
-                           source_uuid[:8], group_id[:8], display_text)
+                           source_uuid, group_id, display_text)
 
             # Upsert user information
             self.db.upsert_user(source_uuid)
@@ -296,9 +333,35 @@ class MessagingService:
             # Mark message as processed with text
             message_id = self.db.mark_message_processed(timestamp, group_id, source_uuid, message_text)
 
+            # Process mentions if present
+            self.logger.debug("About to process mentions for message_id=%s, data_message type=%s, envelope keys=%s",
+                            message_id, type(data_message), list(envelope_data.keys()) if envelope_data else "None")
+            self._process_and_store_mentions(data_message, message_id, envelope_data)
+
             # Download and store attachments if present
-            if isinstance(data_message, dict) and data_message.get('attachments'):
-                self._download_and_store_attachments(data_message['attachments'], message_id, timestamp)
+            if isinstance(data_message, dict):
+                attachments_to_process = []
+
+                # Regular attachments
+                if data_message.get('attachments'):
+                    attachments_to_process.extend(data_message['attachments'])
+
+                # Stickers treated as attachments
+                if data_message.get('sticker_as_attachment') and data_message.get('sticker'):
+                    sticker = data_message.get('sticker', {})
+                    sticker_attachment = {
+                        'id': sticker.get('stickerId', f"sticker_{timestamp}"),
+                        'filename': f"sticker_{sticker.get('packId', 'unknown')[:8]}_{sticker.get('stickerId', 'unknown')}.webp",
+                        'contentType': 'image/webp',
+                        'size': 0,  # Size unknown for stickers
+                        'is_sticker': True,
+                        'pack_id': sticker.get('packId'),
+                        'sticker_id': sticker.get('stickerId')
+                    }
+                    attachments_to_process.append(sticker_attachment)
+
+                if attachments_to_process:
+                    self._download_and_store_attachments(attachments_to_process, message_id, timestamp)
 
             # Check if user has reactions configured and send reaction
             user_reactions = self.db.get_user_reactions(source_uuid)
@@ -307,9 +370,9 @@ class MessagingService:
                 if emoji:
                     success = self.send_reaction(group_id, timestamp, source_uuid, emoji)
                     if success:
-                        self.logger.info("Sent reaction %s to message from %s", emoji, source_uuid[:8])
+                        self.logger.info("Sent reaction %s to message from %s", emoji, source_uuid)
                     else:
-                        self.logger.warning("Failed to send reaction to message from %s", source_uuid[:8])
+                        self.logger.warning("Failed to send reaction to message from %s", source_uuid)
 
             return True
 
@@ -360,7 +423,7 @@ class MessagingService:
             return False
 
     def _download_and_store_attachments(self, attachments, message_id, timestamp):
-        """Download and store attachments for a message."""
+        """Download and store attachments for a message, including sticker metadata."""
         for att in attachments:
             try:
                 if not isinstance(att, dict):
@@ -370,6 +433,7 @@ class MessagingService:
                 filename = att.get('filename') or f"attachment_{timestamp}_{attachment_id}"
                 content_type = att.get('contentType', 'unknown')
                 file_size = att.get('size', 0)
+                is_sticker = att.get('is_sticker', False)
 
                 if not attachment_id:
                     self.logger.warning("Attachment missing ID, skipping")
@@ -383,35 +447,72 @@ class MessagingService:
                 file_data = None
                 actual_filename = filename
 
-                # Try to find the attachment file
-                potential_paths = [
-                    os.path.join(attachments_dir, attachment_id),
-                    os.path.join(attachments_dir, f"{attachment_id}*"),
-                ]
-
-                # Also search for files containing the attachment_id
-                search_patterns = [
-                    os.path.join(attachments_dir, f"*{attachment_id}*"),
-                    os.path.join(attachments_dir, filename) if filename else None
-                ]
+                # For stickers, also try sticker-specific directories
+                if is_sticker:
+                    sticker_dirs = [
+                        attachments_dir,
+                        os.path.expanduser("~/.local/share/signal-cli/stickers"),
+                        os.path.expanduser("~/.local/share/signal-cli/data/stickers")
+                    ]
+                else:
+                    sticker_dirs = [attachments_dir]
 
                 found_file = None
-                for pattern in search_patterns:
-                    if pattern:
-                        matches = glob.glob(pattern)
-                        if matches:
-                            found_file = matches[0]  # Take first match
-                            break
+                for search_dir in sticker_dirs:
+                    if not os.path.exists(search_dir):
+                        continue
+
+                    # Try to find the attachment file
+                    search_patterns = [
+                        os.path.join(search_dir, attachment_id),
+                        os.path.join(search_dir, f"{attachment_id}*"),
+                        os.path.join(search_dir, f"*{attachment_id}*"),
+                        os.path.join(search_dir, filename) if filename else None
+                    ]
+
+                    for pattern in search_patterns:
+                        if pattern:
+                            matches = glob.glob(pattern)
+                            if matches:
+                                found_file = matches[0]  # Take first match
+                                break
+
+                    if found_file:
+                        break
 
                 if found_file and os.path.exists(found_file):
                     try:
                         with open(found_file, 'rb') as f:
                             file_data = f.read()
                         actual_filename = os.path.basename(found_file)
+                        file_size = len(file_data)
 
-                        # Store in database
-                        with self.db._get_connection() as conn:
-                            cursor = conn.cursor()
+                        self.logger.info("Found and reading %s: %s (%s, %d bytes)",
+                                        "sticker" if is_sticker else "attachment",
+                                        actual_filename, content_type, file_size)
+
+                    except Exception as read_error:
+                        self.logger.error("Error reading %s file %s: %s",
+                                        "sticker" if is_sticker else "attachment",
+                                        found_file, read_error)
+                        # Continue to store metadata even if file read fails
+                        file_data = None
+
+                # Store metadata in database (even if file data is missing)
+                try:
+                    with self.db._get_connection() as conn:
+                        cursor = conn.cursor()
+
+                        # For stickers, store additional metadata
+                        if is_sticker:
+                            cursor.execute("""
+                                INSERT INTO attachments (
+                                    message_id, attachment_id, filename, content_type,
+                                    file_size, file_data, pack_id, sticker_id
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (message_id, attachment_id, actual_filename, content_type,
+                                 file_size, file_data, att.get('pack_id'), att.get('sticker_id')))
+                        else:
                             cursor.execute("""
                                 INSERT INTO attachments (
                                     message_id, attachment_id, filename, content_type,
@@ -419,16 +520,27 @@ class MessagingService:
                                 ) VALUES (?, ?, ?, ?, ?, ?)
                             """, (message_id, attachment_id, actual_filename, content_type, file_size, file_data))
 
-                        self.logger.info("Found and stored attachment: %s (%s, %d bytes)", actual_filename, content_type, len(file_data))
+                    if file_data:
+                        self.logger.info("Stored %s: %s (%s, %d bytes)",
+                                        "sticker" if is_sticker else "attachment",
+                                        actual_filename, content_type, len(file_data))
+                    else:
+                        self.logger.info("Stored %s metadata: %s (%s) - file data missing",
+                                        "sticker" if is_sticker else "attachment",
+                                        actual_filename, content_type)
 
-                    except Exception as read_error:
-                        self.logger.error("Error reading attachment file %s: %s", found_file, read_error)
+                except Exception as store_error:
+                    self.logger.error("Error storing %s metadata: %s",
+                                    "sticker" if is_sticker else "attachment", store_error)
 
-                else:
-                    self.logger.warning("Attachment file not found for ID: %s (searched in %s)", attachment_id, attachments_dir)
+                if not found_file:
+                    self.logger.warning("%s file not found for ID: %s (searched in %s)",
+                                      "Sticker" if is_sticker else "Attachment",
+                                      attachment_id, ", ".join(sticker_dirs if is_sticker else [attachments_dir]))
 
             except Exception as e:
-                self.logger.error("Error downloading attachment: %s", e)
+                self.logger.error("Error processing %s: %s",
+                                "sticker" if att.get('is_sticker') else "attachment", e)
 
     def _select_emoji(self, emojis: List[str], mode: str) -> Optional[str]:
         """
@@ -457,6 +569,67 @@ class MessagingService:
         else:
             return random.choice(emojis)
 
+    def _process_and_store_mentions(self, data_message, message_id, envelope_data):
+        """Process and store mentions data from signal-cli JSON."""
+        try:
+            mentions = None
+
+            # Try to get mentions from data_message if it's a dict
+            if isinstance(data_message, dict):
+                self.logger.debug("data_message keys: %s", list(data_message.keys()))
+                mentions = data_message.get('mentions')
+            else:
+                self.logger.debug("data_message is not dict, type: %s", type(data_message))
+
+            # If no mentions in data_message, try envelope_data
+            if not mentions and envelope_data:
+                self.logger.debug("envelope_data keys: %s", list(envelope_data.keys()))
+                mentions = envelope_data.get('dataMessage', {}).get('mentions')
+
+                # Also try sync message path
+                if not mentions:
+                    sync_message = envelope_data.get('syncMessage', {})
+                    self.logger.debug("syncMessage keys: %s", list(sync_message.keys()) if sync_message else "None")
+                    sent_message = sync_message.get('sentMessage', {})
+                    self.logger.debug("sentMessage keys: %s", list(sent_message.keys()) if sent_message else "None")
+
+                    # The mentions are directly in sentMessage, not in the message sub-object
+                    mentions = sent_message.get('mentions')
+                    self.logger.debug("Found mentions in sentMessage: %s", mentions)
+
+            if not mentions:
+                self.logger.debug("No mentions found in any location")
+                return
+
+            if not isinstance(mentions, list):
+                self.logger.debug("mentions is not a list, type: %s, value: %s", type(mentions), mentions)
+                return
+
+            self.logger.info("Processing %d mentions for message %d", len(mentions), message_id)
+
+            for mention in mentions:
+                if not isinstance(mention, dict):
+                    continue
+
+                mentioned_uuid = mention.get('uuid')
+                mention_start = mention.get('start')
+                mention_length = mention.get('length')
+
+                if mentioned_uuid and mention_start is not None and mention_length is not None:
+                    # Ensure the mentioned user exists in our database
+                    self.db.upsert_user(mentioned_uuid)
+
+                    # Store the mention
+                    self.db.add_mention(message_id, mentioned_uuid, mention_start, mention_length)
+
+                    self.logger.debug("Stored mention: user %s at position %d-%d",
+                                    mentioned_uuid, mention_start, mention_start + mention_length)
+                else:
+                    self.logger.warning("Invalid mention data: %s", mention)
+
+        except Exception as e:
+            self.logger.error("Error processing mentions: %s", e)
+
     def poll_and_process_messages(self, timeout_seconds: int = 15) -> int:
         """
         Poll for messages and process them all.
@@ -468,12 +641,37 @@ class MessagingService:
             Number of messages processed
         """
         try:
-            messages = self.receive_messages(timeout_seconds)
             processed_count = 0
 
-            for envelope in messages:
-                if self.process_message(envelope):
-                    processed_count += 1
+            # Keep draining the queue until no more messages
+            # signal-cli might not return all messages in one call
+            max_drain_attempts = 10
+            for attempt in range(max_drain_attempts):
+                queued_messages = self.receive_messages(timeout_seconds=0)
+                if not queued_messages:
+                    self.logger.debug(f"Queue drained after {attempt} attempts")
+                    break
+
+                self.logger.info(f"Drain attempt {attempt + 1}: Found {len(queued_messages)} messages")
+                for envelope in queued_messages:
+                    if self.process_message(envelope):
+                        processed_count += 1
+
+                # If we got messages, immediately check for more
+                if len(queued_messages) > 0:
+                    continue
+                else:
+                    break
+
+            # Only poll with timeout if we want to wait for new messages
+            if timeout_seconds > 0 and processed_count == 0:
+                # Only wait if we didn't already process messages
+                new_messages = self.receive_messages(timeout_seconds)
+                if new_messages:
+                    self.logger.debug(f"Received {len(new_messages)} new messages after waiting")
+                    for envelope in new_messages:
+                        if self.process_message(envelope):
+                            processed_count += 1
 
             if processed_count > 0:
                 self.logger.info("Processed %d messages", processed_count)
@@ -582,13 +780,14 @@ class MessagingService:
 
                     if group_member_count > 0:
                         synced_members += group_member_count
-                        self.logger.debug("Synced %d members for group %s", group_member_count, group_id[:8])
+                        self.logger.debug("Synced %d members for group %s", group_member_count, group_id)
 
                 except Exception as e:
                     self.logger.warning("Error parsing group line: %s - %s", line[:100], e)
                     continue
 
             self.logger.info("Group membership sync complete: %d groups, %d total members", synced_groups, synced_members)
+
             return True
 
         except subprocess.TimeoutExpired:
