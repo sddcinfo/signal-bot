@@ -128,9 +128,11 @@ class StandaloneWebServer:
                 self.logger.error(f"Error stopping web server: {e}")
 
 
-def check_port_in_use(port: int, host: str = 'localhost') -> bool:
+def check_port_in_use(port: int, host: str = None) -> bool:
     """Check if a port is already in use."""
     import socket
+    if host is None:
+        host = NETWORK['LOCALHOST']
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         result = sock.connect_ex((host, port))
@@ -160,14 +162,14 @@ def kill_process_on_port(port: int) -> bool:
 def main():
     """Main entry point for standalone web server."""
     parser = argparse.ArgumentParser(description='Signal Bot Standalone Web Server')
-    parser.add_argument('--testing', action='store_true', help='Use testing port (8085) instead of production port (8084)')
+    parser.add_argument('--testing', action='store_true', help=f'Use testing port ({NETWORK["DEFAULT_WEB_PORT"] + 1}) instead of production port ({NETWORK["DEFAULT_WEB_PORT"]})')
     parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
 
     args = parser.parse_args()
 
-    # Simple port management: 8084 for production, 8085 for testing
-    port = 8085 if args.testing else 8084
+    # Port management using constants
+    port = (NETWORK['DEFAULT_WEB_PORT'] + 1) if args.testing else NETWORK['DEFAULT_WEB_PORT']
 
     # Check if port is in use and handle it
     if check_port_in_use(port, args.host):

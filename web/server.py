@@ -58,12 +58,13 @@ class ModularWebServer:
     """Modular web server that demonstrates the new architecture."""
 
     def __init__(self, db: DatabaseManager, setup_service: SetupService, ai_provider=None,
-                 port: int = 8084, host: str = '0.0.0.0', logger=None):
+                 port: int = None, host: str = None, logger=None):
+        from config.constants import NETWORK
         self.db = db
         self.setup_service = setup_service
         self.ai_provider = ai_provider
-        self.port = port
-        self.host = host
+        self.port = port or NETWORK['DEFAULT_WEB_PORT']
+        self.host = host or NETWORK['DEFAULT_WEB_HOST']
         self.server = None
         self.logger = logger or logging.getLogger(__name__)
 
@@ -2245,7 +2246,7 @@ class ModularWebServer:
 
 
 # Example usage function
-def start_modular_server(db: DatabaseManager, setup_service: SetupService, ai_provider=None, port: int = 8085):
+def start_modular_server(db: DatabaseManager, setup_service: SetupService, ai_provider=None, port: int = None):
     """Start the modular web server for demonstration."""
     server = ModularWebServer(db, setup_service, ai_provider, port)
     url = server.start()

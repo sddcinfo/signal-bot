@@ -410,7 +410,8 @@ class SignalBotManager:
         print("\n2. Web interface...")
         try:
             import requests
-            response = requests.get(f"http://localhost:{self.config.WEB_PORT}/", timeout=5)
+            from config.constants import NETWORK
+            response = requests.get(f"http://{NETWORK['LOCALHOST']}:{self.config.WEB_PORT}/", timeout=5)
             if response.status_code == 200:
                 print("  ✅ Web interface accessible")
             else:

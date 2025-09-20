@@ -707,7 +707,9 @@ class MessagingService:
             return None
 
         # For now, all modes use random selection
-        # TODO: Implement sequential tracking and AI-based selection
+        # Future enhancement: Implement sequential tracking and AI-based selection
+        # Sequential mode would track last used emoji index per user
+        # AI mode would select based on message sentiment/content
         return random.choice(emojis)
 
     def _process_and_store_mentions(self, data_message, message_id, envelope_data):
